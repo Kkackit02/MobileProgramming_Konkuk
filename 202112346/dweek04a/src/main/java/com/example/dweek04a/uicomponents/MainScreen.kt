@@ -60,6 +60,7 @@ fun MainScreen(modifier: Modifier = Modifier) {
                     checked = isFilterActive.value,
                     onCheckedChange = { isFilterActive.value = it }
                 )
+
             }
 
             Spacer(modifier = Modifier.height(8.dp))
