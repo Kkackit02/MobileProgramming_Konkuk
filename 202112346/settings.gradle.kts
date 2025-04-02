@@ -23,3 +23,4 @@ rootProject.name = "My Application 333"
 include(":app")
 include(":dweek04a")
 include(":dweek03a")
+include(":dweek05a")
