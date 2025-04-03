@@ -23,6 +23,7 @@ import com.example.dweek04a.model.TodoStatus
 
 @Composable
 fun TodoSwitch(
+    //202112346 정근녕
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier
@@ -48,5 +49,8 @@ fun TodoSwitch(
 @Preview
 @Composable
 private fun TodoSwitchPrev() {
-    TodoItem(Item("모프 공부하기1", "03-26 11:19"))
+    TodoSwitch(
+        checked = false,
+        onCheckedChange = { it }
+    )
 }

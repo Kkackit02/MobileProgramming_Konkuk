@@ -25,6 +25,7 @@ import com.example.dweek04a.model.TodoStatus
 @Composable
 fun MainScreen(modifier: Modifier = Modifier) {
 
+    //202112346 정근녕
     val todoList = remember {
         mutableStateListOf<Item>().apply {
             addAll(TodoItemFactory.makeTodoList())
