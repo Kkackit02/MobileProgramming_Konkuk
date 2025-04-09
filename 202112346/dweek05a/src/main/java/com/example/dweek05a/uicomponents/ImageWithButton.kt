@@ -19,6 +19,8 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.example.dweek05a.R
+import com.example.dweek05a.model.ImageUri
+
 
 @Composable
 fun ImageWithButton(
@@ -27,7 +29,7 @@ fun ImageWithButton(
     button: @Composable () -> Unit
 ) {
     Column(
-        modifier = Modifier.fillMaxWidth(),
+        //modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally
     )
     {
@@ -53,12 +55,46 @@ fun ImageWithButton(
     button: @Composable () -> Unit
 ) {
     Column(
-        modifier = Modifier.fillMaxWidth(),
+        // = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally
     )
     {
         AsyncImage(
             model = image,
+            contentDescription = "이미지",
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .size(200.dp)
+                .clip(CircleShape)
+
+        )
+        button()
+
+    }
+
+}
+
+
+@Composable
+//함수 오버라이딩(ImageUri 버전)
+fun ImageWithButton(
+    image: ImageUri,
+    modifier: Modifier = Modifier,
+    button: @Composable () -> Unit
+) {
+
+    val img = when(image){
+        is ImageUri.ResImage -> image.resID
+        is ImageUri.WebImage -> image.webUrl
+    }
+
+    Column(
+        //modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally
+    )
+    {
+        AsyncImage(
+            model = img,
             contentDescription = "이미지",
             contentScale = ContentScale.Crop,
             modifier = Modifier
