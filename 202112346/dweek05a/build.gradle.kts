@@ -2,7 +2,11 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.parcelize)
 }
+
+//여기에서 플러그인을 넣어서 사용할꺼야! 라는 뜻
+// 여기 있는건 컴파일 과정에서 동작
 
 android {
     namespace = "com.example.dweek05a"
@@ -39,6 +43,8 @@ android {
     }
 }
 
+//이게 라이브러리
+// 여기에서 있는건 런타임 상에서 동작
 dependencies {
 
     implementation(libs.androidx.core.ktx)
