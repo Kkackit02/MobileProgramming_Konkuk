@@ -13,6 +13,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import com.example.dweek07a.example01.uicomponents.HomeScreen
 import com.example.dweek07a.example01.uicomponents.MainScreen
+import com.example.dweek07a.example02.uicomponents.LoginMainScreen
+import com.example.dweek07a.example02.uicomponents.LoginScreen
 import com.example.dweek07a.ui.theme.MyApplication333Theme
 
 class MainActivity : ComponentActivity() {
@@ -21,7 +23,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             MyApplication333Theme {
-                MainScreen()
+                LoginMainScreen()
             }
         }
     }

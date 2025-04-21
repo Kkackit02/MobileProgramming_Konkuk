@@ -41,7 +41,18 @@ fun NavGraph(
         }
 
         composable(route = Routes.ScreenC.route) {
-            Screen_C(onNavigateHome = { navController.navigate(Routes.Home.route) })
+            Screen_C(onNavigateHome = {
+                navController.navigate(Routes.Home.route) {
+                    popUpTo(Routes.Home.route)
+                    {
+                        inclusive = true
+                    }
+                    launchSingleTop = true
+                    //back stack을 초기화 해서 뒤로가기를 누르면 이전화면이 아니라
+                    // 바로 홈으로 이동
+
+                }
+            })
 
         }
 
