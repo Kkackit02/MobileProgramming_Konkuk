@@ -6,4 +6,4 @@ data class ItemData(
 
     val name: String,
     val number: String,
-    val click: Int = 0)
+    var click: Int = 0)
