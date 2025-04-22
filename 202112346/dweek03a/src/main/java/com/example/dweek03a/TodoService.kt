@@ -26,7 +26,7 @@ class TodoService (val todoList: MutableList<Item>){
         } else {
             println("잘못된 인덱스 입력됨")
         }
-        println("202112354 한승현")
+        println("202112346 정근녕")
     }
 
     fun searchContent(){
@@ -38,7 +38,7 @@ class TodoService (val todoList: MutableList<Item>){
                 println("$i: ${todoList[i]}")
             }
         }
-        println("202112354 한승현")
+        println("202112346 정근녕")
     }
 
     fun listTodos() {
