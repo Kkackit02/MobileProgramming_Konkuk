@@ -1,6 +1,7 @@
 package com.example.a2024midexam.uicomponent
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -25,7 +26,10 @@ import com.example.a2024midexam.viewmodel.ItemViewModel
 @Composable
 
 //가장 기본 스크린
-fun HomeScreen(onNavigateSubScreen: (String, String, Int) -> Unit, itemViewModel: ItemViewModel = viewModel()) {
+fun HomeScreen(
+    onNavigateSubScreen: (String, String, Int) -> Unit,
+    itemViewModel: ItemViewModel = viewModel()
+) {
 
     val itemList = itemViewModel.itemList
 
@@ -40,9 +44,19 @@ fun HomeScreen(onNavigateSubScreen: (String, String, Int) -> Unit, itemViewModel
                     .fillMaxWidth()
                     .align(Alignment.CenterHorizontally)
             )
-            ItemInput(itemList , itemViewModel)
+            ItemInput(itemList, itemViewModel)
         }
 
+        Text(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable {
+                    itemViewModel.sortList()
+
+                }
+                .align(Alignment.CenterHorizontally)
+                .background(Color.Gray), text = "친구목록"
+        )
         LazyColumn(
             modifier = Modifier,
             contentPadding = PaddingValues(10.dp),
