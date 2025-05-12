@@ -1,4 +1,4 @@
-package com.example.week09
+package com.example.dweek10a
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -8,29 +8,21 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
-import com.example.week09.example01.theme.Week09Theme
-import com.example.week09.example01.uicomponents.MainScreen
-import com.example.week09.example02.uicomponents.MainScreen3
+import com.example.dweek10a.example04.MainScreen05
+import com.example.dweek10a.example05.NotificationApp
+import com.example.dweek10a.ui.theme.MyApp1Theme
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            Week09Theme {
-                MainScreen3()
-                /*
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    Greeting(
-                        name = "Android",
-                        modifier = Modifier.padding(innerPadding)
-                    )
+            MyApp1Theme {
+                NotificationApp()
                 }
-                 */
             }
         }
     }
-}
 
 @Composable
 fun Greeting(name: String, modifier: Modifier = Modifier) {
@@ -43,7 +35,7 @@ fun Greeting(name: String, modifier: Modifier = Modifier) {
 @Preview(showBackground = true)
 @Composable
 fun GreetingPreview() {
-    Week09Theme {
+    MyApp1Theme {
         Greeting("Android")
     }
 }
