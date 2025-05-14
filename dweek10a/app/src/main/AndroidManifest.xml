@@ -29,6 +29,14 @@
 
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"></action>
+                <category android:name="android.intent.category.DEFAULT"></category>
+                <data android:scheme="myapp" android:host="greenjoahome.com"/>
+            </intent-filter>
+
+
         </activity>
     </application>
 

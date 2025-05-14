@@ -8,8 +8,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
+import com.example.dweek10a.example03.MainScreen04
 import com.example.dweek10a.example04.MainScreen05
 import com.example.dweek10a.example05.NotificationApp
+import com.example.dweek10a.example06.NotificationNavGraph
 import com.example.dweek10a.ui.theme.MyApp1Theme
 
 class MainActivity : ComponentActivity() {
@@ -18,7 +20,8 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             MyApp1Theme {
-                MainScreen05()
+                MainScreen04()
+                //NotificationNavGraph()
                 }
             }
         }

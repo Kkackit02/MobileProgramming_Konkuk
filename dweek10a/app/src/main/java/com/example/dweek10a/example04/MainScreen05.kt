@@ -28,6 +28,7 @@ import androidx.core.app.ActivityCompat.shouldShowRequestPermissionRationale
 import androidx.core.content.ContextCompat.checkSelfPermission
 import androidx.core.net.toUri
 import com.example.dweek10a.example02.MainScreen02
+import com.example.dweek10a.example03.MainScreen04
 import com.example.dweek10a.functions.makeCall
 import com.example.dweek10a.functions.showCamera
 import com.example.dweek10a.uicomponents.RationaleCallDialog
@@ -181,6 +182,7 @@ fun MainScreen05(modifier: Modifier = Modifier) {
         }, modifier = Modifier.width(200.dp)) {
             Text("전화걸기")
         }
+        
         Button(onClick = {
             if (cameraPermissionGranted())
                 showCamera(context)
@@ -197,5 +199,5 @@ fun MainScreen05(modifier: Modifier = Modifier) {
 @Preview
 @Composable
 private fun MainScreen01Preview() {
-    MainScreen02()
+    MainScreen04()
 }
