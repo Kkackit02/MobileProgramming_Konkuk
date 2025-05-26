@@ -50,16 +50,16 @@ fun FetchDaumNews(newsViewModel: NewsViewModel = viewModel()) {
 }
 @OptIn(ExperimentalMaterialApi::class)
 @Composable
-fun FetchBugsChart(newsViewModel: NewsViewModel = viewModel()) {
+fun FetchMelonChart(newsViewModel: NewsViewModel = viewModel()) {
     val chartList = newsViewModel.chartList
     val isLoading = newsViewModel.isLoading.value
     val pullRefreshState = rememberPullRefreshState(
         refreshing = isLoading,
-        onRefresh = { newsViewModel.fetchBugsChart() }
+        onRefresh = { newsViewModel.fetchMelonChart() }
     )
 
     LaunchedEffect(Unit) {
-        newsViewModel.fetchBugsChart()
+        newsViewModel.fetchMelonChart()
     }
 
     Box(
