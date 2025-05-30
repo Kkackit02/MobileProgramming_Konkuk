@@ -10,10 +10,12 @@ import com.example.teamproject_map_login.model.Routes
 import com.example.teamproject_map_login.uicomponents.LoginScreen
 import com.example.teamproject_map_login.uicomponents.RegisterScreen
 import com.example.teamproject_map_login.uicomponents.WelcomeScreen
+import com.example.teamproject_map_login.uicomponents.NaverMapScreen
+
 @Composable
 fun LoginNavGraph(navController: NavHostController) {
 
-    NavHost(navController = navController, startDestination = Routes.Login.route) {
+    NavHost(navController = navController, startDestination = Routes.Map.route) {
 
         composable(route = Routes.Login.route) {
             LoginScreen(
@@ -45,6 +47,10 @@ fun LoginNavGraph(navController: NavHostController) {
                     navController.popBackStack() // 뒤로 가기
                 }
             )
+        }
+
+        composable(route = Routes.Map.route) {
+            NaverMapScreen()
         }
     }
 }
