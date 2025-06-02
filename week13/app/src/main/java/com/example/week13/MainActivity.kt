@@ -1,14 +1,9 @@
 package com.example.week13
 
 import android.content.Intent
-import android.content.IntentFilter
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -30,14 +25,37 @@ class MainActivity : ComponentActivity() {
 //        super.onStop()
 //    }
 
+
+
+
+
+
+    fun handleIntent(intent: Intent?)
+    {
+        //activity가 활성화되면 intent정보가 들어옴!!
+        //물론 기본은 아무 값도 안들어오지만, 우리가 만들어서 넣어줄 수 있음
+        val msgSender = intent?.getStringExtra("msgSender")
+        val msgBody = intent?.getStringExtra("msgBody")
+        //만약 intent에 정보가 없으면 그냥 null이 들어감
+        setContent {
+            Week13Theme {
+                MainScreen(msgSender, msgBody)
+            }
+        }
+    }
+
+
+    //activity가 재사용 될 때 호출 되는 함수
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleIntent(intent)
+
+    }
+    //activity가 새로 생성될때만 호출됨
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         //enableEdgeToEdge() // status 바를 계속 표시하는 기능
-        setContent {
-            Week13Theme {
-                MainScreen()
-            }
-        }
+        handleIntent(intent)
     }
 }
 

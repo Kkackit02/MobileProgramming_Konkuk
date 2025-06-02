@@ -4,6 +4,7 @@
 
 
 
+    <!-- HW를 사용하는데 있어서 문제가 없도록, 권한 수정-->
     <uses-feature
         android:name="android.hardware.telephony"
         android:required="false" />
@@ -11,6 +12,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
     <application
+        android:name=".MyApplication"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -31,6 +33,9 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+
+        <!-- 브로드캐스트가 발생했을때 누가 수신하는지를 intentFilter 등록 -->
         <receiver android:name=".SMSBR"
             android:enabled="true"
             android:exported="true">
