@@ -98,4 +98,24 @@ class ItemRepository(private val table: DatabaseReference) {
             emit(emptyList())
         }
     }
+
+
+    fun getSortedItems(): Flow<List<ItemEntity>> = callbackFlow {
+        val listener = object : ValueEventListener{
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val itemList = snapshot.children.mapNotNull {
+                    it.getValue(ItemEntity::class.java)
+                }.sortedByDescending { it.itemQuantity  }
+                trySend(itemList)
+            }
+
+            override fun onCancelled(error: DatabaseError) {
+                close(error.toException())
+            }
+        }
+        table.addValueEventListener(listener)
+        awaitClose {
+            table.removeEventListener(listener)
+        }
+    }
 }

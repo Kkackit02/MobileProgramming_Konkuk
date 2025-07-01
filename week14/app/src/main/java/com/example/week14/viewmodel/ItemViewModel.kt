@@ -59,14 +59,13 @@ class ItemViewModel(private val repository: ItemRepository): ViewModel() {
         }
     }
     fun SortItems() {
-        /*
         viewModelScope.launch {
             repository.getSortedItems().collect {
                 _itemList.value = it
             }
         }
 
-         */
+
     }
 
 }

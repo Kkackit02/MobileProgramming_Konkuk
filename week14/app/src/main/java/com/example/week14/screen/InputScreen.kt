@@ -84,8 +84,18 @@ fun InputScreen(viewModel: ItemViewModel) {
             }) {
                 Text("delete")
             }
-            Button(onClick = { }) {
+            Button(onClick = {
+                viewModel.getItems("$itemName")
+                clearText()
+            }) {
+
                 Text("find")
+            }
+            Button(onClick = {
+                viewModel.SortItems()
+            }) {
+
+                Text("sort")
             }
         }
     }
