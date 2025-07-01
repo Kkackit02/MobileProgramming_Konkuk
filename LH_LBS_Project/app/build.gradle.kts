@@ -2,12 +2,15 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.secrets.gradle.plugin)
     alias(libs.plugins.google.gms.google.services)
 }
+
 
 android {
     namespace = "com.example.lh_lbs_project"
     compileSdk = 35
+
 
     defaultConfig {
         applicationId = "com.example.lh_lbs_project"
@@ -40,8 +43,13 @@ android {
     }
 }
 
+secrets {
+    propertiesFileName ="secrets.properties"
+    defaultPropertiesFileName = "local.defaults.properties"
+}
 dependencies {
 
+    implementation("com.naver.maps:map-sdk:3.21.0")
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
@@ -51,6 +59,8 @@ dependencies {
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
     implementation(libs.firebase.functions)
+    implementation(libs.map.sdk)
+    implementation(libs.naver.map.compose)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

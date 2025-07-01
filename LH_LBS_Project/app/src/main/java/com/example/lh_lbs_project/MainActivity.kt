@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.lh_lbs_project.ui.theme.LH_LBS_ProjectTheme
+import com.naver.maps.geometry.LatLng
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import okhttp3.*
@@ -32,18 +33,34 @@ class MainActivity : ComponentActivity() {
                 var result by remember { mutableStateOf("아직 요청 전입니다.") }
                 val scope = rememberCoroutineScope()
 
-                GPTRequestScreen(
-                    resultText = result,
-                    onRequestClick = {
-                        scope.launch(Dispatchers.IO) {
-                            val response = sendGptRequest()
-                            result = response
-                        }
-                    }
-                )
+                Column(modifier = Modifier.fillMaxSize()) {
+                    // GPT 요청 결과 UI
+                    GPTRequestScreen(
+                        resultText = result,
+                        onRequestClick = {
+                            scope.launch(Dispatchers.IO) {
+                                val response = sendGptRequest()
+                                result = response
+                            }
+                        },
+                        modifier = Modifier
+                            .weight(1f) // 화면 절반 차지
+                            .fillMaxWidth()
+                    )
+
+                    // 지도 마커 표시 UI
+                    MapMarkerDisplayScreen(
+                        location = LatLng(37.54160, 127.07356),
+                        locationName = "TEST",
+                        modifier = Modifier
+                            .weight(1f) // 화면 절반 차지
+                            .fillMaxWidth()
+                    )
+                }
             }
         }
     }
+
     private fun sendGptRequest(): String {
         val json = JSONObject().apply {
             put("user_preference", JSONObject().apply {
@@ -53,20 +70,28 @@ class MainActivity : ComponentActivity() {
                 put("cafes", false)
             })
             put("routes", JSONArray().apply {
-                put(JSONObject(mapOf(
-                    "id" to 1,
-                    "noise_level" to 65,
-                    "cctv_count" to 2,
-                    "green_area" to 0.1,
-                    "cafe_count" to 5
-                )))
-                put(JSONObject(mapOf(
-                    "id" to 2,
-                    "noise_level" to 40,
-                    "cctv_count" to 6,
-                    "green_area" to 0.05,
-                    "cafe_count" to 1
-                )))
+                put(
+                    JSONObject(
+                        mapOf(
+                            "id" to 1,
+                            "noise_level" to 65,
+                            "cctv_count" to 2,
+                            "green_area" to 0.1,
+                            "cafe_count" to 5
+                        )
+                    )
+                )
+                put(
+                    JSONObject(
+                        mapOf(
+                            "id" to 2,
+                            "noise_level" to 40,
+                            "cctv_count" to 6,
+                            "green_area" to 0.05,
+                            "cafe_count" to 1
+                        )
+                    )
+                )
             })
         }
 

@@ -11,9 +11,10 @@ import com.example.lh_lbs_project.ui.theme.LH_LBS_ProjectTheme
 @Composable
 fun GPTRequestScreen(
     resultText: String = "아직 결과 없음",
-    onRequestClick: (() -> Unit)? = null
+    onRequestClick: (() -> Unit)? = null,
+    modifier: Modifier = Modifier // 기본값도 함께 설정해주면 편해요
 ) {
-    Column(modifier = Modifier
+    Column(modifier = modifier
         .fillMaxSize()
         .padding(16.dp)) {
 
@@ -26,15 +27,5 @@ fun GPTRequestScreen(
         Button(onClick = { onRequestClick?.invoke() }) {
             Text("GPT에게 추천받기")
         }
-    }
-}
-
-@Preview(showBackground = true)
-@Composable
-fun GPTRequestScreenPreview() {
-    LH_LBS_ProjectTheme {
-        GPTRequestScreen(
-            resultText = "예시: 2번 경로가 가장 안전하고 조용함"
-        )
     }
 }

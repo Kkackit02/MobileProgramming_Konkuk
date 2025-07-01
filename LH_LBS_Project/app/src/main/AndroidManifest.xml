@@ -12,6 +12,9 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.LH_LBS_Project"
         tools:targetApi="31">
+        <meta-data
+            android:name="com.naver.maps.map.NCP_KEY_ID"
+            android:value="${NAVER_CLIENT_ID}"/>
         <activity
             android:name=".MainActivity"
             android:exported="true"
