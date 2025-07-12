@@ -8,9 +8,9 @@ import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
 import com.example.teamproject_map_login.model.Routes
 import com.example.teamproject_map_login.uicomponents.LoginScreen
+import com.example.teamproject_map_login.uicomponents.MapComponent.TestScreen
 import com.example.teamproject_map_login.uicomponents.RegisterScreen
 import com.example.teamproject_map_login.uicomponents.WelcomeScreen
-import com.example.teamproject_map_login.uicomponents.NaverMapScreen
 
 @Composable
 fun LoginNavGraph(navController: NavHostController) {
@@ -50,7 +50,7 @@ fun LoginNavGraph(navController: NavHostController) {
         }
 
         composable(route = Routes.Map.route) {
-            NaverMapScreen()
+            TestScreen()
         }
     }
 }

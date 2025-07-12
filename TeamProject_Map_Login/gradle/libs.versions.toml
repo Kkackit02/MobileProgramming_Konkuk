@@ -12,7 +12,6 @@ googleGmsGoogleServices = "4.4.2"
 firebaseAuth = "23.2.1"
 lifecycleViewmodelCompose = "2.9.0"
 navigationCompose = "2.9.0"
-kakaoMaps = "2.9.5"
 naverMapCompose = "1.8.0"
 secretsGradlePlugin = "2.0.1"
 
