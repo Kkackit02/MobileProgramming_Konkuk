@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -5,12 +7,22 @@ plugins {
     alias(libs.plugins.secrets.gradle.plugin)
     alias(libs.plugins.google.gms.google.services)
 }
+val secretProps = Properties().apply {
+    val file = rootProject.file("secrets.properties")
+    if (file.exists()) {
+        file.inputStream().use { this.load(it) } // ✅ 명확하게 this.load 사용!
+    }
+}
 
 
 android {
     namespace = "com.example.lh_lbs_project"
     compileSdk = 35
 
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
 
     defaultConfig {
         applicationId = "com.example.lh_lbs_project"
@@ -20,6 +32,11 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        buildConfigField("String", "NAVER_CLIENT_ID", "\"${secretProps["NAVER_CLIENT_ID"] ?: ""}\"")
+        buildConfigField("String", "NAVER_CLIENT_SECRET", "\"${secretProps["NAVER_CLIENT_SECRET"] ?: ""}\"")
+        resValue("string", "naver_client_id", "\"${secretProps["NAVER_CLIENT_ID"] ?: ""}\"")
+
     }
 
     buildTypes {

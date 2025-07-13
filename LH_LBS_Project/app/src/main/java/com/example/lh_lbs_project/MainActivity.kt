@@ -6,10 +6,10 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.lh_lbs_project.ui.theme.LH_LBS_ProjectTheme
 import com.naver.maps.geometry.LatLng
@@ -32,9 +32,9 @@ class MainActivity : ComponentActivity() {
             LH_LBS_ProjectTheme {
                 var result by remember { mutableStateOf("아직 요청 전입니다.") }
                 val scope = rememberCoroutineScope()
+                var showDirections by remember { mutableStateOf(false) }
 
                 Column(modifier = Modifier.fillMaxSize()) {
-                    // GPT 요청 결과 UI
                     GPTRequestScreen(
                         resultText = result,
                         onRequestClick = {
@@ -44,18 +44,34 @@ class MainActivity : ComponentActivity() {
                             }
                         },
                         modifier = Modifier
-                            .weight(1f) // 화면 절반 차지
+                            .weight(1f)
                             .fillMaxWidth()
                     )
 
-                    // 지도 마커 표시 UI
-                    MapMarkerDisplayScreen(
-                        location = LatLng(37.54160, 127.07356),
-                        locationName = "TEST",
-                        modifier = Modifier
-                            .weight(1f) // 화면 절반 차지
-                            .fillMaxWidth()
-                    )
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                        Button(onClick = { showDirections = false }) {
+                            Text("마커 표시")
+                        }
+                        Button(onClick = { showDirections = true }) {
+                            Text("경로 표시")
+                        }
+                    }
+
+                    if (showDirections) {
+                        DirectionsScreen(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth()
+                        )
+                    } else {
+                        MapMarkerDisplayScreen(
+                            location = LatLng(37.54160, 127.07356),
+                            locationName = "TEST",
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth()
+                        )
+                    }
                 }
             }
         }
@@ -101,7 +117,7 @@ class MainActivity : ComponentActivity() {
         )
 
         val request = Request.Builder()
-            .url(gptUrl)  // 여기도 https://로 시작하는지 꼭 확인!
+            .url(gptUrl)
             .post(body)
             .build()
 
