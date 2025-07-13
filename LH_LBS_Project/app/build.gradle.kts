@@ -35,7 +35,8 @@ android {
 
         buildConfigField("String", "NAVER_CLIENT_ID", "\"${secretProps["NAVER_CLIENT_ID"] ?: ""}\"")
         buildConfigField("String", "NAVER_CLIENT_SECRET", "\"${secretProps["NAVER_CLIENT_SECRET"] ?: ""}\"")
-        resValue("string", "naver_client_id", "\"${secretProps["NAVER_CLIENT_ID"] ?: ""}\"")
+        resValue("string", "NAVER_CLIENT_ID", "\"${secretProps["NAVER_CLIENT_ID"] ?: ""}\"")
+        resValue("string", "NAVER_CLIENT_SECRET", "\"${secretProps["NAVER_CLIENT_SECRET"] ?: ""}\"")
 
     }
 

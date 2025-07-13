@@ -30,6 +30,8 @@ fun DirectionsScreen(modifier: Modifier = Modifier) {
         cameraPositionState.position = CameraPosition(start, 11.0)
         scope.launch(Dispatchers.IO) {
             Log.d("NAVER_KEY_CHECK", "ID: ${BuildConfig.NAVER_CLIENT_ID}, SECRET: ${BuildConfig.NAVER_CLIENT_SECRET}")
+            Log.d("HEADERS", "ID: '${BuildConfig.NAVER_CLIENT_ID}'")
+            Log.d("HEADERS", "SECRET: '${BuildConfig.NAVER_CLIENT_SECRET}'")
 
             val directions = getDirections(start, goal)
             if (directions != null) {
