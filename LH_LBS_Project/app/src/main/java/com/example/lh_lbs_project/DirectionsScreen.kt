@@ -43,8 +43,8 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
     var incompleteSites by remember { mutableStateOf<List<LatLng>>(emptyList()) }
     val scope = rememberCoroutineScope()
 
-    val start = LatLng(37.510257428761, 127.04391561527) // 선정릉역
-    val goal = LatLng(37.513262, 127.100139)   // 잠실역
+    val start = LatLng(37.566833,  127.05266)
+    val goal = LatLng( 37.56149,  127.06457)
 
     LaunchedEffect(Unit) {
         cameraPositionState.position = CameraPosition(start, 11.0)
@@ -57,6 +57,7 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
 
             // 1. 최초 대안 경로 요청
             var candidateRoutes = getDirections(start, goal) ?: emptyList()
+            Log.d("ROUTE_DISPLAY", "Initial candidate routes count: ${candidateRoutes.size}")
             routes = candidateRoutes
 
             val parsedSites = getSeoulData()?.let { parseIncompleteSites(it) } ?: emptyList()
@@ -86,13 +87,14 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
                 // 5. 최선 후보가 안전한지 검사
                 if (sitesOnBestRoute.isEmpty()) {
                     Log.d("ROUTE_SEARCH", "🎉 안전 경로 발견! 탐색을 종료합니다.")
+                    Log.d("ROUTE_DISPLAY", "Final safe route found. Routes count: 1")
                     routes = listOf(bestRoute) // 안전 경로만 최종 표시
                     finalSafeRouteFound = true
                 } else {
                     // 6. 안전하지 않다면, 새로운 우회 경로 생성
                     Log.d("ROUTE_SEARCH", "안전하지 않음. 첫번째 공사장을 기준으로 우회 경로 4개를 생성합니다.")
                     val firstSite = sitesOnBestRoute.first()
-                    val detourDistance = 0.002 * (currentAttempt) // 시도할수록 더 멀리 우회
+                    val detourDistance = 0.0005 * (currentAttempt) // 시도할수록 더 멀리 우회
                     val waypoints = listOf(
                         LatLng(firstSite.latitude, firstSite.longitude + detourDistance),
                         LatLng(firstSite.latitude, firstSite.longitude - detourDistance),
@@ -105,6 +107,7 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
                     }
 
                     // 7. 다음 탐색을 위해 후보 경로 교체
+                    Log.d("ROUTE_DISPLAY", "New detour routes count: ${newDetourRoutes.size}")
                     candidateRoutes = newDetourRoutes
                     routes = newDetourRoutes // 지도에는 현재 탐색중인 우회 경로들만 표시
                 }
@@ -135,16 +138,11 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
                         }
                         if (chosenRoute != null) {
                             routes = listOf(chosenRoute) // GPT가 선택한 경로만 최종 표시
+                            Log.d("ROUTE_DISPLAY", "GPT chosen route. Routes count: 1")
                             Log.d("ROUTE_SEARCH", "GPT가 경로 ${chosenRouteId}를 선택했습니다. 지도에 표시합니다.")
                         } else {
-                            Log.d("ROUTE_SEARCH", "GPT가 선택한 경로를 찾을 수 없습니다. 기존 최선 경로를 표시합니다.")
-                            val bestRoute = candidateRoutes.minByOrNull { route ->
-                                val routeIndex = candidateRoutes.indexOf(route)
-                                val constructionCount = sitesOnRoutes[routeIndex]?.size ?: 0
-                                val routeLength = route.zipWithNext { a, b -> haversine(a.latitude, a.longitude, b.latitude, b.longitude) }.sum()
-                                constructionCount * 100000 + routeLength
-                            }
-                            if(bestRoute != null) routes = listOf(bestRoute)
+                            Log.d("ROUTE_SEARCH", "GPT가 선택한 경로를 찾을 수 없습니다. 모든 후보 경로를 표시합니다.")
+                            routes = candidateRoutes
                         }
                     }
                     "suggest_waypoints" -> {
@@ -154,16 +152,11 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
                             val gptRecommendedRoute = getDirectionsWithWaypoints(start, goal, gptWaypoints.first()) // GPT가 여러개 줘도 일단 첫번째만 사용
                             if (gptRecommendedRoute != null) {
                                 routes = listOf(gptRecommendedRoute) // GPT 추천 경로만 최종 표시
+                                Log.d("ROUTE_DISPLAY", "GPT recommended route. Routes count: 1")
                                 Log.d("ROUTE_SEARCH", "GPT 추천 경로를 지도에 표시합니다.")
                             } else {
-                                Log.d("ROUTE_SEARCH", "GPT 추천 경유지로 경로를 찾을 수 없습니다. 기존 최선 경로를 표시합니다.")
-                                val bestRoute = candidateRoutes.minByOrNull { route ->
-                                    val routeIndex = candidateRoutes.indexOf(route)
-                                    val constructionCount = sitesOnRoutes[routeIndex]?.size ?: 0
-                                    val routeLength = route.zipWithNext { a, b -> haversine(a.latitude, a.longitude, b.latitude, b.longitude) }.sum()
-                                    constructionCount * 100000 + routeLength
-                                }
-                                if(bestRoute != null) routes = listOf(bestRoute)
+                                Log.d("ROUTE_SEARCH", "GPT 추천 경유지로 경로를 찾을 수 없습니다. 모든 후보 경로를 표시합니다.")
+                                routes = candidateRoutes
                             }
                         } else {
                             Log.d("ROUTE_SEARCH", "GPT로부터 경유지 추천을 받지 못했습니다. 기존 최선 경로를 표시합니다.")
@@ -177,14 +170,8 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
                         }
                     }
                     else -> {
-                        Log.d("ROUTE_SEARCH", "GPT 응답이 유효하지 않거나 결정이 없습니다. 기존 최선 경로를 표시합니다.")
-                        val bestRoute = candidateRoutes.minByOrNull { route ->
-                            val routeIndex = candidateRoutes.indexOf(route)
-                            val constructionCount = sitesOnRoutes[routeIndex]?.size ?: 0
-                            val routeLength = route.zipWithNext { a, b -> haversine(a.latitude, a.longitude, b.latitude, b.longitude) }.sum()
-                            constructionCount * 100000 + routeLength
-                        }
-                        if(bestRoute != null) routes = listOf(bestRoute)
+                        Log.d("ROUTE_SEARCH", "GPT 응답이 유효하지 않거나 결정이 없습니다. 모든 후보 경로를 표시합니다.")
+                        routes = candidateRoutes
                     }
                 }
             }
@@ -196,9 +183,21 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
         modifier = modifier.fillMaxSize(),
         cameraPositionState = cameraPositionState,
     ) {
+        val routeColors = listOf(
+            androidx.compose.ui.graphics.Color.Red,
+            androidx.compose.ui.graphics.Color.Blue,
+            androidx.compose.ui.graphics.Color.Green,
+            androidx.compose.ui.graphics.Color.Yellow,
+            androidx.compose.ui.graphics.Color.Cyan,
+            androidx.compose.ui.graphics.Color.Magenta,
+            androidx.compose.ui.graphics.Color.Black,
+            androidx.compose.ui.graphics.Color.DarkGray,
+            androidx.compose.ui.graphics.Color.LightGray
+        )
+
         routes.forEachIndexed { index, route ->
             val color = if (routes.size == 1) androidx.compose.ui.graphics.Color.Green
-                        else androidx.compose.ui.graphics.Color.Gray
+                        else routeColors[index % routeColors.size]
             val pathWidth = if (routes.size == 1) 5.dp else 3.dp
             val outline = if (routes.size == 1) 1.dp else 0.dp
 
@@ -230,6 +229,8 @@ private fun getDirections(start: LatLng, goal: LatLng): List<List<LatLng>>? {
             "&goal=${goal.longitude},${goal.latitude}" +
             "&option=traoptimal:tracomfort:traavoidtoll" // 대안 경로 옵션 추가
 
+    Log.d("API_CALL", "Calling getDirections API. URL: $url")
+
     val request = Request.Builder()
         .url(url)
         .addHeader("X-NCP-APIGW-API-KEY-ID", BuildConfig.NAVER_CLIENT_ID)
@@ -241,9 +242,11 @@ private fun getDirections(start: LatLng, goal: LatLng): List<List<LatLng>>? {
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 Log.e("DIRECTIONS_ERROR", "HTTP 오류: ${response.code}, ${response.message}")
+                Log.e("API_CALL", "getDirections API Response (Error): ${response.body?.string()}")
                 return null
             }
             val responseBody = response.body?.string() ?: return null
+            Log.d("API_CALL", "getDirections API Response (Success): ${responseBody.take(500)}...") // Log first 500 chars
             val json = JSONObject(responseBody)
             val routeObject = json.getJSONObject("route")
             val allRoutes = mutableListOf<List<LatLng>>()
@@ -276,6 +279,10 @@ private fun getDirectionsWithWaypoints(start: LatLng, goal: LatLng, waypoint: La
             "&goal=${goal.longitude},${goal.latitude}" +
             "&waypoints=${waypoint.longitude},${waypoint.latitude}"
 
+    Log.d("API_CALL", "Calling getDirectionsWithWaypoints API. URL: $url")
+    Log.d("API_CALL", "NAVER_CLIENT_ID: ${BuildConfig.NAVER_CLIENT_ID}")
+    Log.d("API_CALL", "NAVER_CLIENT_SECRET: ${BuildConfig.NAVER_CLIENT_SECRET}")
+
     val request = Request.Builder()
         .url(url)
         .addHeader("X-NCP-APIGW-API-KEY-ID", BuildConfig.NAVER_CLIENT_ID)
@@ -287,9 +294,11 @@ private fun getDirectionsWithWaypoints(start: LatLng, goal: LatLng, waypoint: La
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 Log.e("DIRECTIONS_ERROR", "[Waypoint] HTTP 오류: ${response.code}, ${response.message}")
+                Log.e("API_CALL", "getDirectionsWithWaypoints API Response (Error): ${response.body?.string()}")
                 return null
             }
             val responseBody = response.body?.string() ?: return null
+            Log.d("API_CALL", "getDirectionsWithWaypoints API Response (Success): ${responseBody.take(500)}...") // Log first 500 chars
             val json = JSONObject(responseBody)
 
             if (json.has("route")) {
@@ -317,15 +326,20 @@ private fun getDirectionsWithWaypoints(start: LatLng, goal: LatLng, waypoint: La
 private fun getSeoulData(): String? {
     val url = "http://openapi.seoul.go.kr:8088/${BuildConfig.API_CLIENT_KEY}/xml/ListOnePMISBizInfo/1/1000/"
 
+    Log.d("API_CALL", "Calling getSeoulData API. URL: $url")
+
     val request = Request.Builder().url(url).build()
     val client = OkHttpClient()
     return try {
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 Log.e("SEOUL_API_ERROR", "HTTP 오류: ${response.code}, ${response.message}")
+                Log.e("API_CALL", "getSeoulData API Response (Error): ${response.body?.string()}")
                 return null
             }
-            response.body?.string()
+            val responseBody = response.body?.string()
+            Log.d("API_CALL", "getSeoulData API Response (Success): ${responseBody?.take(500)}...") // Log first 500 chars
+            responseBody
         }
     } catch (e: Exception) {
         Log.e("SEOUL_API_ERROR", "예외 발생: ${e.message}", e)
@@ -390,7 +404,7 @@ private fun haversine(lat1: Double, lon1: Double, lat2: Double, lon2: Double): D
 }
 
 // 한 점이 경로 위에 있는지 확인 (임계값 이내)
-private fun isLocationOnPath(location: LatLng, path: List<LatLng>, threshold: Double = 50.0): Boolean {
+private fun isLocationOnPath(location: LatLng, path: List<LatLng>, threshold: Double = 150.0): Boolean {
     for (i in 0 until path.size - 1) {
         val start = path[i]
         val end = path[i + 1]
