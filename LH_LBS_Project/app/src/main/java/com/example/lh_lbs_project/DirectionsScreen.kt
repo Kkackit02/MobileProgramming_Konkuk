@@ -7,6 +7,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.naver.maps.geometry.LatLng
 import com.naver.maps.map.CameraPosition
+import com.naver.maps.map.compose.LocationTrackingMode
 import com.naver.maps.map.compose.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -22,101 +23,205 @@ import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.math.sqrt
 
+data class GptRouteDecision(
+    val decision: String,
+    val chosenRouteId: String? = null,
+    val waypoints: List<LatLng>? = null
+)
+
+data class RouteInfoForGpt(
+    val id: String,
+    val lengthKm: Double,
+    val constructionSites: List<LatLng>
+)
+
 @OptIn(ExperimentalNaverMapApi::class)
 @Composable
-fun DirectionsScreen(modifier: Modifier = Modifier) {
+fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (LatLng, LatLng, List<RouteInfoForGpt>) -> GptRouteDecision?) {
     val cameraPositionState = rememberCameraPositionState()
     var routes by remember { mutableStateOf<List<List<LatLng>>>(emptyList()) }
     var incompleteSites by remember { mutableStateOf<List<LatLng>>(emptyList()) }
     val scope = rememberCoroutineScope()
 
-    // 출발지/도착지 설정
-    val start = LatLng(37.4979502, 127.027637) // 강남역
+    val start = LatLng(37.510257428761, 127.04391561527) // 선정릉역
     val goal = LatLng(37.513262, 127.100139)   // 잠실역
 
     LaunchedEffect(Unit) {
         cameraPositionState.position = CameraPosition(start, 11.0)
 
         scope.launch(Dispatchers.IO) {
-            // ✅ 1. 기본 대안 경로 요청
-            val baseRoutes = getDirections(start, goal) ?: emptyList()
-            routes = baseRoutes
+            // --- 반복적 경로 탐색 알고리즘 시작 ---
+            val maxAttempts = 3
+            var currentAttempt = 0
+            var finalSafeRouteFound = false
 
-            // ✅ 2. 공공데이터 요청 및 파싱
-            val seoulRaw = getSeoulData()
-            if (seoulRaw != null) {
-                val parsedSites = parseIncompleteSites(seoulRaw)
-                incompleteSites = parsedSites
-                Log.d("SEOUL_INCOMPLETE", "공사현장 ${parsedSites.size}건 표시됨")
+            // 1. 최초 대안 경로 요청
+            var candidateRoutes = getDirections(start, goal) ?: emptyList()
+            routes = candidateRoutes
 
-                // ✅ 3. 최단 경로(첫 번째)와 겹치는 공사 현장 찾기
-                val optimalRoute = baseRoutes.firstOrNull()
-                if (optimalRoute != null) {
-                    val sitesOnOptimalRoute = findConstructionSitesOnRoutes(listOf(optimalRoute), parsedSites).getOrDefault(0, emptyList())
+            val parsedSites = getSeoulData()?.let { parseIncompleteSites(it) } ?: emptyList()
+            incompleteSites = parsedSites
 
-                    if (sitesOnOptimalRoute.isNotEmpty()) {
-                        Log.d("ROUTE_ANALYSIS", "최단 경로에서 ${sitesOnOptimalRoute.size}개의 공사 현장 발견. 우회 경로 탐색 시작.")
-                        val firstSite = sitesOnOptimalRoute.first() // 편의상 첫번째 공사 현장만 사용
+            var sitesOnRoutes: Map<Int, List<LatLng>> = emptyMap() // 스코프 확장
 
-                        // ✅ 4. 가상 경유지 4개 생성 (동서남북 200m)
-                        val detourDistance = 0.002
-                        val waypoints = listOf(
-                            LatLng(firstSite.latitude, firstSite.longitude + detourDistance), // 동
-                            LatLng(firstSite.latitude, firstSite.longitude - detourDistance), // 서
-                            LatLng(firstSite.latitude + detourDistance, firstSite.longitude), // 남
-                            LatLng(firstSite.latitude - detourDistance, firstSite.longitude)  // 북
-                        )
+            while (currentAttempt < maxAttempts && !finalSafeRouteFound && candidateRoutes.isNotEmpty()) {
+                currentAttempt++
+                Log.d("ROUTE_SEARCH", "--- 탐색 시도: $currentAttempt ---")
 
-                        // ✅ 5. 각 경유지를 사용해 새로운 경로 4개 요청
-                        val detourRoutes = waypoints.mapNotNull {
-                            getDirectionsWithWaypoints(start, goal, it)
+                sitesOnRoutes = findConstructionSitesOnRoutes(candidateRoutes, parsedSites) // 업데이트
+
+                // 4. 최선 후보 선택 (공사장 수, 경로 길이 기준)
+                val bestRoute = candidateRoutes.minByOrNull { route ->
+                    val routeIndex = candidateRoutes.indexOf(route)
+                    val constructionCount = sitesOnRoutes[routeIndex]?.size ?: 0
+                    val routeLength = route.zipWithNext { a, b -> haversine(a.latitude, a.longitude, b.latitude, b.longitude) }.sum()
+                    constructionCount * 100000 + routeLength // 공사장 1개를 100km 페널티로 계산
+                }!!
+
+                val bestRouteIndex = candidateRoutes.indexOf(bestRoute)
+                val sitesOnBestRoute = sitesOnRoutes[bestRouteIndex] ?: emptyList()
+
+                Log.d("ROUTE_SEARCH", "최선 후보: 경로 ${bestRouteIndex+1} (공사장 ${sitesOnBestRoute.size}개)")
+
+                // 5. 최선 후보가 안전한지 검사
+                if (sitesOnBestRoute.isEmpty()) {
+                    Log.d("ROUTE_SEARCH", "🎉 안전 경로 발견! 탐색을 종료합니다.")
+                    routes = listOf(bestRoute) // 안전 경로만 최종 표시
+                    finalSafeRouteFound = true
+                } else {
+                    // 6. 안전하지 않다면, 새로운 우회 경로 생성
+                    Log.d("ROUTE_SEARCH", "안전하지 않음. 첫번째 공사장을 기준으로 우회 경로 4개를 생성합니다.")
+                    val firstSite = sitesOnBestRoute.first()
+                    val detourDistance = 0.002 * (currentAttempt) // 시도할수록 더 멀리 우회
+                    val waypoints = listOf(
+                        LatLng(firstSite.latitude, firstSite.longitude + detourDistance),
+                        LatLng(firstSite.latitude, firstSite.longitude - detourDistance),
+                        LatLng(firstSite.latitude + detourDistance, firstSite.longitude),
+                        LatLng(firstSite.latitude - detourDistance, firstSite.longitude)
+                    )
+
+                    val newDetourRoutes = waypoints.mapNotNull {
+                        getDirectionsWithWaypoints(start, goal, it)
+                    }
+
+                    // 7. 다음 탐색을 위해 후보 경로 교체
+                    candidateRoutes = newDetourRoutes
+                    routes = newDetourRoutes // 지도에는 현재 탐색중인 우회 경로들만 표시
+                }
+            }
+
+            if (!finalSafeRouteFound) {
+                Log.d("ROUTE_SEARCH", "최대 시도($maxAttempts) 후에도 안전 경로를 찾지 못했습니다. GPT에게 문의합니다.")
+
+                // GPT에게 보낼 후보 경로 정보 구성
+                val candidateRoutesInfoForGpt = candidateRoutes.mapIndexed { index, route ->
+                    val constructionCount = sitesOnRoutes[index]?.size ?: 0
+                    val routeLength = route.zipWithNext { a, b -> haversine(a.latitude, a.longitude, b.latitude, b.longitude) }.sum()
+                    RouteInfoForGpt(
+                        id = "route_${index + 1}", // 고유 ID 부여
+                        lengthKm = routeLength / 1000.0,
+                        constructionSites = sitesOnRoutes[index] ?: emptyList()
+                    )
+                }
+
+                // GPT 호출
+                val gptDecision = sendGptRequest(start, goal, candidateRoutesInfoForGpt)
+
+                when (gptDecision?.decision) {
+                    "choose_route" -> {
+                        val chosenRouteId = gptDecision.chosenRouteId
+                        val chosenRoute = candidateRoutesInfoForGpt.find { it.id == chosenRouteId }?.let { chosenInfo ->
+                            candidateRoutes[candidateRoutesInfoForGpt.indexOf(chosenInfo)]
                         }
-
-                        // ✅ 6. 기존 경로와 새로운 우회 경로를 합쳐서 상태 업데이트
-                        routes = baseRoutes + detourRoutes
-                        Log.d("ROUTE_ANALYSIS", "총 ${routes.size}개의 경로를 지도에 표시합니다.")
+                        if (chosenRoute != null) {
+                            routes = listOf(chosenRoute) // GPT가 선택한 경로만 최종 표시
+                            Log.d("ROUTE_SEARCH", "GPT가 경로 ${chosenRouteId}를 선택했습니다. 지도에 표시합니다.")
+                        } else {
+                            Log.d("ROUTE_SEARCH", "GPT가 선택한 경로를 찾을 수 없습니다. 기존 최선 경로를 표시합니다.")
+                            val bestRoute = candidateRoutes.minByOrNull { route ->
+                                val routeIndex = candidateRoutes.indexOf(route)
+                                val constructionCount = sitesOnRoutes[routeIndex]?.size ?: 0
+                                val routeLength = route.zipWithNext { a, b -> haversine(a.latitude, a.longitude, b.latitude, b.longitude) }.sum()
+                                constructionCount * 100000 + routeLength
+                            }
+                            if(bestRoute != null) routes = listOf(bestRoute)
+                        }
+                    }
+                    "suggest_waypoints" -> {
+                        val gptWaypoints = gptDecision.waypoints
+                        if (gptWaypoints != null && gptWaypoints.isNotEmpty()) {
+                            Log.d("ROUTE_SEARCH", "GPT로부터 ${gptWaypoints.size}개의 경유지 추천 받음.")
+                            val gptRecommendedRoute = getDirectionsWithWaypoints(start, goal, gptWaypoints.first()) // GPT가 여러개 줘도 일단 첫번째만 사용
+                            if (gptRecommendedRoute != null) {
+                                routes = listOf(gptRecommendedRoute) // GPT 추천 경로만 최종 표시
+                                Log.d("ROUTE_SEARCH", "GPT 추천 경로를 지도에 표시합니다.")
+                            } else {
+                                Log.d("ROUTE_SEARCH", "GPT 추천 경유지로 경로를 찾을 수 없습니다. 기존 최선 경로를 표시합니다.")
+                                val bestRoute = candidateRoutes.minByOrNull { route ->
+                                    val routeIndex = candidateRoutes.indexOf(route)
+                                    val constructionCount = sitesOnRoutes[routeIndex]?.size ?: 0
+                                    val routeLength = route.zipWithNext { a, b -> haversine(a.latitude, a.longitude, b.latitude, b.longitude) }.sum()
+                                    constructionCount * 100000 + routeLength
+                                }
+                                if(bestRoute != null) routes = listOf(bestRoute)
+                            }
+                        } else {
+                            Log.d("ROUTE_SEARCH", "GPT로부터 경유지 추천을 받지 못했습니다. 기존 최선 경로를 표시합니다.")
+                            val bestRoute = candidateRoutes.minByOrNull { route ->
+                                val routeIndex = candidateRoutes.indexOf(route)
+                                val constructionCount = sitesOnRoutes[routeIndex]?.size ?: 0
+                                val routeLength = route.zipWithNext { a, b -> haversine(a.latitude, a.longitude, b.latitude, b.longitude) }.sum()
+                                constructionCount * 100000 + routeLength
+                            }
+                            if(bestRoute != null) routes = listOf(bestRoute)
+                        }
+                    }
+                    else -> {
+                        Log.d("ROUTE_SEARCH", "GPT 응답이 유효하지 않거나 결정이 없습니다. 기존 최선 경로를 표시합니다.")
+                        val bestRoute = candidateRoutes.minByOrNull { route ->
+                            val routeIndex = candidateRoutes.indexOf(route)
+                            val constructionCount = sitesOnRoutes[routeIndex]?.size ?: 0
+                            val routeLength = route.zipWithNext { a, b -> haversine(a.latitude, a.longitude, b.latitude, b.longitude) }.sum()
+                            constructionCount * 100000 + routeLength
+                        }
+                        if(bestRoute != null) routes = listOf(bestRoute)
                     }
                 }
             }
+            // --- 알고리즘 종료 ---
         }
     }
 
-    // ✅ 3. 지도 UI
     NaverMap(
         modifier = modifier.fillMaxSize(),
         cameraPositionState = cameraPositionState,
     ) {
-        // 경로 표시
         routes.forEachIndexed { index, route ->
-            val color = when (index) {
-                0 -> androidx.compose.ui.graphics.Color.Blue       // 1. 최적 경로
-                1 -> androidx.compose.ui.graphics.Color.Green     // 2. 편안한 경로
-                2 -> androidx.compose.ui.graphics.Color.Gray      // 3. 무료 경로
-                3 -> androidx.compose.ui.graphics.Color.Cyan      // 4. 우회 경로 1 (동)
-                4 -> androidx.compose.ui.graphics.Color.Magenta   // 5. 우회 경로 2 (서)
-                5 -> androidx.compose.ui.graphics.Color.Yellow    // 6. 우회 경로 3 (남)
-                6 -> androidx.compose.ui.graphics.Color.Black     // 7. 우회 경로 4 (북)
-                else -> androidx.compose.ui.graphics.Color.DarkGray
-            }
+            val color = if (routes.size == 1) androidx.compose.ui.graphics.Color.Green
+                        else androidx.compose.ui.graphics.Color.Gray
+            val pathWidth = if (routes.size == 1) 5.dp else 3.dp
+            val outline = if (routes.size == 1) 1.dp else 0.dp
+
             PathOverlay(
                 coords = route,
-                width = if(index < 3) 5.dp else 3.dp, // 기본 경로는 굵게
+                width = pathWidth,
                 color = color,
-                outlineWidth = 1.dp
+                outlineWidth = outline
             )
         }
 
-        // 공사 마커 표시
         incompleteSites.forEach { site ->
             Marker(
                 state = MarkerState(position = site),
                 captionText = "공사중",
-                captionColor = androidx.compose.ui.graphics.Color.Blue,
-                iconTintColor = androidx.compose.ui.graphics.Color.Yellow
+                captionColor = androidx.compose.ui.graphics.Color.Magenta, // 겹치는 공사 현장은 자홍색
+                iconTintColor = androidx.compose.ui.graphics.Color.Red // 아이콘 색상도 변경
             )
         }
     }
 }
+
+// ... (이하 모든 헬퍼 함수들은 이전과 동일하게 유지) ...
 
 // ✅ 네이버 경로 API 호출
 private fun getDirections(start: LatLng, goal: LatLng): List<List<LatLng>>? {
@@ -139,12 +244,10 @@ private fun getDirections(start: LatLng, goal: LatLng): List<List<LatLng>>? {
                 return null
             }
             val responseBody = response.body?.string() ?: return null
-            Log.d("DIRECTIONS_RESPONSE", responseBody) // 전체 응답 로그 출력
             val json = JSONObject(responseBody)
             val routeObject = json.getJSONObject("route")
             val allRoutes = mutableListOf<List<LatLng>>()
 
-            // 모든 경로 옵션 키를 순회 (traoptimal, tracomfort, traavoidtoll 등)
             routeObject.keys().forEach { key ->
                 if (routeObject.has(key) && routeObject.get(key) is JSONArray) {
                     val routeArray = routeObject.getJSONArray(key)
@@ -287,12 +390,11 @@ private fun haversine(lat1: Double, lon1: Double, lat2: Double, lon2: Double): D
 }
 
 // 한 점이 경로 위에 있는지 확인 (임계값 이내)
-private fun isLocationOnPath(location: LatLng, path: List<LatLng>, threshold: Double = 20.0): Boolean {
+private fun isLocationOnPath(location: LatLng, path: List<LatLng>, threshold: Double = 50.0): Boolean {
     for (i in 0 until path.size - 1) {
         val start = path[i]
         val end = path[i + 1]
 
-        // 간단한 경계 상자 확인으로 성능 최적화
         if (location.latitude < start.latitude.coerceAtMost(end.latitude) - 0.001 ||
             location.latitude > start.latitude.coerceAtLeast(end.latitude) + 0.001 ||
             location.longitude < start.longitude.coerceAtMost(end.longitude) - 0.001 ||
@@ -304,14 +406,15 @@ private fun isLocationOnPath(location: LatLng, path: List<LatLng>, threshold: Do
         val dist2 = haversine(location.latitude, location.longitude, end.latitude, end.longitude)
         val segmentDist = haversine(start.latitude, start.longitude, end.latitude, end.longitude)
 
-        // 점이 선분 양 끝점 중 하나와 매우 가까운 경우
         if (dist < threshold || dist2 < threshold) return true
 
-        // 점과 선분 사이의 최단 거리 계산 (근사치)
         val s = (dist.pow(2) - dist2.pow(2) + segmentDist.pow(2)) / (2 * segmentDist)
-        if (s in 0.0..segmentDist) {
-            val h = sqrt(dist.pow(2) - s.pow(2))
-            if (h < threshold) return true
+        if (s.isFinite() && s in 0.0..segmentDist) {
+            val hSquared = dist.pow(2) - s.pow(2)
+            if (hSquared >= 0) {
+                val h = sqrt(hSquared)
+                if (h < threshold) return true
+            }
         }
     }
     return false

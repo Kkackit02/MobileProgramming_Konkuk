@@ -35,18 +35,18 @@ class MainActivity : ComponentActivity() {
                 var showDirections by remember { mutableStateOf(false) }
 
                 Column(modifier = Modifier.fillMaxSize()) {
-                    GPTRequestScreen(
-                        resultText = result,
-                        onRequestClick = {
-                            scope.launch(Dispatchers.IO) {
-                                val response = sendGptRequest()
-                                result = response
-                            }
-                        },
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxWidth()
-                    )
+                    // GPTRequestScreen(
+                //     resultText = result,
+                //     onRequestClick = {
+                //         scope.launch(Dispatchers.IO) {
+                //             val response = sendGptRequest()
+                //             result = response
+                //         }
+                //     },
+                //     modifier = Modifier
+                //         .weight(1f)
+                //         .fillMaxWidth()
+                // )
 
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                         Button(onClick = { showDirections = false }) {
@@ -61,7 +61,10 @@ class MainActivity : ComponentActivity() {
                         DirectionsScreen(
                             modifier = Modifier
                                 .weight(1f)
-                                .fillMaxWidth()
+                                .fillMaxWidth(),
+                            sendGptRequest = { start, goal, blockedAreas ->
+                                sendGptRequest(start, goal, blockedAreas)
+                            }
                         )
                     } else {
                         MapMarkerDisplayScreen(
@@ -77,43 +80,25 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun sendGptRequest(): String {
-        val json = JSONObject().apply {
-            put("user_preference", JSONObject().apply {
-                put("quiet", true)
-                put("safe", true)
-                put("green", false)
-                put("cafes", false)
-            })
-            put("routes", JSONArray().apply {
-                put(
-                    JSONObject(
-                        mapOf(
-                            "id" to 1,
-                            "noise_level" to 65,
-                            "cctv_count" to 2,
-                            "green_area" to 0.1,
-                            "cafe_count" to 5
-                        )
-                    )
-                )
-                put(
-                    JSONObject(
-                        mapOf(
-                            "id" to 2,
-                            "noise_level" to 40,
-                            "cctv_count" to 6,
-                            "green_area" to 0.05,
-                            "cafe_count" to 1
-                        )
-                    )
-                )
-            })
+    // Firebase Function 호출을 위한 GPT 요청 함수
+    suspend fun sendGptRequest(start: LatLng, goal: LatLng, candidateRoutesInfo: List<RouteInfoForGpt>): GptRouteDecision? {
+        val jsonBody = JSONObject().apply {
+            put("start", JSONObject().apply { put("lat", start.latitude); put("lng", start.longitude) })
+            put("goal", JSONObject().apply { put("lat", goal.latitude); put("lng", goal.longitude) })
+            put("candidateRoutesInfo", JSONArray(candidateRoutesInfo.map { routeInfo ->
+                JSONObject().apply {
+                    put("id", routeInfo.id)
+                    put("lengthKm", routeInfo.lengthKm)
+                    put("constructionSites", JSONArray(routeInfo.constructionSites.map { site ->
+                        JSONObject().apply { put("lat", site.latitude); put("lng", site.longitude) }
+                    }))
+                }
+            }))
         }
 
         val body = RequestBody.create(
             "application/json; charset=utf-8".toMediaTypeOrNull(),
-            json.toString()
+            jsonBody.toString()
         )
 
         val request = Request.Builder()
@@ -124,15 +109,35 @@ class MainActivity : ComponentActivity() {
         return try {
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
-                    Log.e("GPT_ERROR", "HTTP 오류: ${response.code}, ${response.message}")
-                    "오류 발생: ${response.code} - ${response.message}"
+                    Log.e("GPT_ERROR", "Firebase Function HTTP 오류: ${response.code}, ${response.message}")
+                    null
                 } else {
-                    response.body?.string() ?: "응답 없음"
+                    val responseBody = response.body?.string() ?: return null
+                    Log.d("GPT_RESPONSE", responseBody)
+                    val jsonResponse = JSONObject(responseBody)
+
+                    val decision = jsonResponse.getString("decision")
+                    var chosenRouteId: String? = null
+                    var waypoints: List<LatLng>? = null
+
+                    when (decision) {
+                        "choose_route" -> {
+                            chosenRouteId = jsonResponse.getString("chosenRouteId")
+                        }
+                        "suggest_waypoints" -> {
+                            val waypointsArray = jsonResponse.getJSONArray("waypoints")
+                            waypoints = (0 until waypointsArray.length()).map { i ->
+                                val waypoint = waypointsArray.getJSONObject(i)
+                                LatLng(waypoint.getDouble("lat"), waypoint.getDouble("lng"))
+                            }
+                        }
+                    }
+                    GptRouteDecision(decision, chosenRouteId, waypoints)
                 }
             }
         } catch (e: Exception) {
-            Log.e("GPT_ERROR", "예외 발생: ${e.message}", e)
-            "예외 발생: ${e.message}"
+            Log.e("GPT_ERROR", "Firebase Function 호출 예외 발생: ${e.message}", e)
+            null
         }
     }
 }
