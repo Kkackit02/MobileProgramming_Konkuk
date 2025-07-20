@@ -1,9 +1,29 @@
 package com.example.lh_lbs_project
 
 import android.util.Log
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.runtime.*
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.naver.maps.geometry.LatLng
 import com.naver.maps.map.CameraPosition
@@ -112,7 +132,7 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
                     // 7. 다음 탐색을 위해 후보 경로 교체
                     Log.d("ROUTE_DISPLAY", "New detour routes count: ${newDetourRoutes.size}")
                     candidateRoutes = newDetourRoutes
-                    routes = routes + newDetourRoutes // 지도에는 현재 탐색중인 우회 경로들만 표시
+                    routes = (routes + newDetourRoutes).distinct()
                 }
             }
 
@@ -198,55 +218,112 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
         }
     }
 
-    NaverMap(
-        modifier = modifier.fillMaxSize(),
-        cameraPositionState = cameraPositionState,
-    ) {
-        val routeColors = listOf(
-            androidx.compose.ui.graphics.Color.Blue,
-            androidx.compose.ui.graphics.Color.Yellow,
-            androidx.compose.ui.graphics.Color.Cyan,
-            androidx.compose.ui.graphics.Color.Magenta,
-            androidx.compose.ui.graphics.Color.Black,
-            androidx.compose.ui.graphics.Color.DarkGray,
-            androidx.compose.ui.graphics.Color.LightGray
-        )
+    var routeVisibility by remember { mutableStateOf<List<Boolean>>(emptyList()) }
 
-        routes.forEachIndexed { index, route ->
-            val isSelected = route == selectedRoute
-            val isInitialNaverRoute = route == initialNaverRoute && selectedRoute == null // 최종 선택된 경로가 없을 때만 초기 경로 강조
+    // routes 상태가 변경될 때 routeVisibility를 초기화합니다.
+    LaunchedEffect(routes) {
+        routeVisibility = List(routes.size) { true }
+    }
 
-            val color = when {
-                isSelected -> androidx.compose.ui.graphics.Color.Green
-                isInitialNaverRoute -> androidx.compose.ui.graphics.Color.Red
-                else -> routeColors[index % routeColors.size]
-            }
-            val pathWidth = when {
-                isSelected -> 8.dp
-                isInitialNaverRoute -> 6.dp // 초기 네이버 경로도 두껍게
-                else -> 3.dp
-            }
-            val outline = when {
-                isSelected -> 1.dp
-                isInitialNaverRoute -> 1.dp // 초기 네이버 경로도 아웃라인
-                else -> 0.dp
-            }
+    Column(modifier = modifier.fillMaxSize()) {
+        // 경로 토글 버튼 (2줄 그리드)
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(2),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(120.dp) // 그리드의 높이를 조절하여 2줄로 보이게 함
+                .padding(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            itemsIndexed(routes) { index, route ->
+                val isVisible = routeVisibility.getOrElse(index) { true }
+                val isSelected = route == selectedRoute
+                val isInitial = route == initialNaverRoute
 
-            PathOverlay(
-                coords = route,
-                width = pathWidth,
-                color = color,
-                outlineWidth = outline
-            )
+                val buttonText = when {
+                    isSelected -> "Final"
+                    isInitial -> "Initial"
+                    else -> "Route ${index + 1}"
+                }
+
+                val borderColor = when {
+                    isSelected -> Color.Green
+                    isInitial -> Color.Red
+                    else -> Color.Transparent
+                }
+
+                Button(
+                    onClick = {
+                        routeVisibility = routeVisibility.toMutableList().also {
+                            if (index < it.size) {
+                                it[index] = !it[index]
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isVisible) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
+                        contentColor = if (isVisible) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+                    ),
+                    modifier = Modifier.border(2.dp, borderColor)
+                ) {
+                    Text(buttonText)
+                }
+            }
         }
 
-        incompleteSites.forEach { site ->
-            Marker(
-                state = MarkerState(position = site),
-                captionText = "공사중",
-                captionColor = androidx.compose.ui.graphics.Color.Magenta, // 겹치는 공사 현장은 자홍색
-                iconTintColor = androidx.compose.ui.graphics.Color.Red // 아이콘 색상도 변경
+        NaverMap(
+            modifier = Modifier.weight(1f),
+            cameraPositionState = cameraPositionState,
+        ) {
+            val routeColors = listOf(
+                androidx.compose.ui.graphics.Color.Blue,
+                androidx.compose.ui.graphics.Color.Yellow,
+                androidx.compose.ui.graphics.Color.Cyan,
+                androidx.compose.ui.graphics.Color.Magenta,
+                androidx.compose.ui.graphics.Color.Black,
+                androidx.compose.ui.graphics.Color.DarkGray,
+                androidx.compose.ui.graphics.Color.LightGray
             )
+
+            routes.forEachIndexed { index, route ->
+                if (routeVisibility.getOrElse(index) { true }) {
+                    val isSelected = route == selectedRoute
+                    val isInitialNaverRoute = route == initialNaverRoute
+
+                    val color = when {
+                        isSelected -> androidx.compose.ui.graphics.Color.Green
+                        isInitialNaverRoute -> androidx.compose.ui.graphics.Color.Red
+                        else -> routeColors[index % routeColors.size]
+                    }
+                    val pathWidth = when {
+                        isSelected -> 8.dp
+                        isInitialNaverRoute -> 6.dp // 초기 네이버 경로도 두껍게
+                        else -> 3.dp
+                    }
+                    val outline = when {
+                        isSelected -> 1.dp
+                        isInitialNaverRoute -> 1.dp // 초기 네이버 경로도 아웃라인
+                        else -> 0.dp
+                    }
+
+                    PathOverlay(
+                        coords = route,
+                        width = pathWidth,
+                        color = color,
+                        outlineWidth = outline
+                    )
+                }
+            }
+
+            incompleteSites.forEach { site ->
+                Marker(
+                    state = MarkerState(position = site),
+                    captionText = "공사중",
+                    captionColor = androidx.compose.ui.graphics.Color.Magenta, // 겹치는 공사 현장은 자홍색
+                    iconTintColor = androidx.compose.ui.graphics.Color.Red // 아이콘 색상도 변경
+                )
+            }
         }
     }
 }
