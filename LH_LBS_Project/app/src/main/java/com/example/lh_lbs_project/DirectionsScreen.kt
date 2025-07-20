@@ -70,14 +70,13 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
     var drainpipeSites by remember { mutableStateOf<List<LatLng>>(emptyList()) } // 하수관로 데이터 추가
     var selectedRoute by remember { mutableStateOf<List<LatLng>?>(null) }
     var initialNaverRoute by remember { mutableStateOf<List<LatLng>?>(null) }
-    var isLoading by remember { mutableStateOf(true) } // 로딩 상태 추가
+    
 
     val scope = rememberCoroutineScope()
     val start = LatLng(37.56694,  127.05250)
     val goal = LatLng( 37.59056,  127.03639)
 
     LaunchedEffect(Unit) {
-        isLoading = true // 데이터 로딩 시작
         cameraPositionState.position = CameraPosition(start, 11.0)
 
         scope.launch(Dispatchers.IO) {
@@ -95,7 +94,8 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
             val parsedSites = getSeoulData()?.let { parseIncompleteSites(it) } ?: emptyList()
             incompleteSites = parsedSites
 
-            // 하수관로 데이터 호출 및 파싱
+            // 하수관로 데이터 호출 및 파싱 (임시 비활성화)
+            /*
             val allPstnInfos = getDrainpipeData()
             val geocodedDrainpipeSites = mutableListOf<LatLng>()
             allPstnInfos.forEach { address ->
@@ -109,6 +109,7 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
             drainpipeSites.forEachIndexed { index, latLng ->
                 Log.d("DRAINPIPE_MARKER", "Drainpipe site $index: Lat=${latLng.latitude}, Lng=${latLng.longitude}")
             }
+            */
 
             var sitesOnRoutes: Map<Int, List<LatLng>> = emptyMap() // 스코프 확장
 
@@ -194,7 +195,7 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
                                 val routeLength = route.zipWithNext { a, b -> haversine(a.latitude, a.longitude, b.latitude, b.longitude) }.sum()
                                 constructionCount * 100000 + routeLength
                             }
-                            if(bestRoute != null) selectedRoute = bestRoute
+                            selectedRoute = bestRoute
                         }
                     }
                     "suggest_waypoints" -> {
@@ -213,7 +214,7 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
                                     val routeLength = route.zipWithNext { a, b -> haversine(a.latitude, a.longitude, b.latitude, b.longitude) }.sum()
                                     constructionCount * 100000 + routeLength
                                 }
-                                if(bestRoute != null) selectedRoute = bestRoute
+                                selectedRoute = bestRoute
                             }
                         }
                     }
@@ -233,7 +234,7 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
         }
 
         // 모든 마커를 포함하도록 카메라 이동
-        val allMarkers = incompleteSites + drainpipeSites
+        val allMarkers = incompleteSites
         if (allMarkers.isNotEmpty()) {
             val bounds = LatLngBounds.Builder().apply {
                 allMarkers.forEach { include(it) }
@@ -242,7 +243,7 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
                 CameraUpdate.fitBounds(bounds, 100) // 100dp 패딩
             )
         }
-        isLoading = false // 데이터 로딩 완료
+        
     }
 
     var routeVisibility by remember { mutableStateOf<List<Boolean>>(emptyList()) }
@@ -299,10 +300,7 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
             }
         }
 
-        if (isLoading) {
-            // 로딩 중일 때 표시할 UI (예: ProgressBar)
-            Text("데이터 로딩 중...", modifier = Modifier.padding(16.dp))
-        } else {
+        
             NaverMap(
                 modifier = Modifier.weight(1f),
                 cameraPositionState = cameraPositionState,
@@ -356,7 +354,8 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
                     )
                 }
 
-                // 하수관로 마커 표시
+                // 하수관로 마커 표시 (임시 비활성화)
+                /*
                 drainpipeSites.forEach { site ->
                     Marker(
                         state = MarkerState(position = site),
@@ -365,8 +364,8 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
                         iconTintColor = androidx.compose.ui.graphics.Color.Blue
                     )
                 }
+                */
             }
-        }
     }
 }
 
