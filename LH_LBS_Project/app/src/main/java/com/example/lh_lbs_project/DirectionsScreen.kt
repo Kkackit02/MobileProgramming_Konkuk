@@ -41,12 +41,12 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
     val cameraPositionState = rememberCameraPositionState()
     var routes by remember { mutableStateOf<List<List<LatLng>>>(emptyList()) }
     var incompleteSites by remember { mutableStateOf<List<LatLng>>(emptyList()) }
-    val scope = rememberCoroutineScope()
+    var selectedRoute by remember { mutableStateOf<List<LatLng>?>(null) }
+    var initialNaverRoute by remember { mutableStateOf<List<LatLng>?>(null) }
 
+    val scope = rememberCoroutineScope()
     val start = LatLng(37.56694,  127.05250)
     val goal = LatLng( 37.59056,  127.03639)
-
-    var selectedRoute by remember { mutableStateOf<List<LatLng>?>(null) }
 
     LaunchedEffect(Unit) {
         cameraPositionState.position = CameraPosition(start, 11.0)
@@ -59,6 +59,7 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
 
             // 1. 최초 대안 경로 요청
             var candidateRoutes = getDirections(start, goal) ?: emptyList()
+            initialNaverRoute = candidateRoutes.firstOrNull() // 첫 번째 경로를 초기 네이버 경로로 저장
             Log.d("ROUTE_DISPLAY", "Initial candidate routes count: ${candidateRoutes.size}")
             routes = candidateRoutes
 
@@ -111,7 +112,7 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
                     // 7. 다음 탐색을 위해 후보 경로 교체
                     Log.d("ROUTE_DISPLAY", "New detour routes count: ${newDetourRoutes.size}")
                     candidateRoutes = newDetourRoutes
-                    routes = newDetourRoutes // 지도에는 현재 탐색중인 우회 경로들만 표시
+                    routes = routes + newDetourRoutes // 지도에는 현재 탐색중인 우회 경로들만 표시
                 }
             }
 
@@ -141,7 +142,6 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
                         if (chosenRoute != null) {
                             selectedRoute = chosenRoute // GPT가 선택한 경로를 최종 경로로 설정
                             Log.d("ROUTE_DISPLAY", "GPT chosen route. Routes count: 1")
-                            Log.d("ROUTE_SEARCH", "GPT가 경로 ${chosenRouteId}를 선택했습니다. 지도에 표시합니다.")
                         } else {
                             Log.d("ROUTE_SEARCH", "GPT가 선택한 경로를 찾을 수 없습니다. 기존 최선 경로를 표시합니다.")
                             val bestRoute = candidateRoutes.minByOrNull { route ->
@@ -161,7 +161,6 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
                             if (gptRecommendedRoute != null) {
                                 selectedRoute = gptRecommendedRoute // GPT 추천 경로를 최종 경로로 설정
                                 Log.d("ROUTE_DISPLAY", "GPT recommended route. Routes count: 1")
-                                Log.d("ROUTE_SEARCH", "GPT 추천 경로를 지도에 표시합니다.")
                             } else {
                                 Log.d("ROUTE_SEARCH", "GPT 추천 경유지로 경로를 찾을 수 없습니다. 기존 최선 경로를 표시합니다.")
                                 val bestRoute = candidateRoutes.minByOrNull { route ->
@@ -204,9 +203,7 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
         cameraPositionState = cameraPositionState,
     ) {
         val routeColors = listOf(
-            androidx.compose.ui.graphics.Color.Red,
             androidx.compose.ui.graphics.Color.Blue,
-            androidx.compose.ui.graphics.Color.Green,
             androidx.compose.ui.graphics.Color.Yellow,
             androidx.compose.ui.graphics.Color.Cyan,
             androidx.compose.ui.graphics.Color.Magenta,
@@ -217,10 +214,23 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
 
         routes.forEachIndexed { index, route ->
             val isSelected = route == selectedRoute
-            val color = if (isSelected) androidx.compose.ui.graphics.Color.Green
-                        else routeColors[index % routeColors.size]
-            val pathWidth = if (isSelected) 8.dp else 3.dp
-            val outline = if (isSelected) 1.dp else 0.dp
+            val isInitialNaverRoute = route == initialNaverRoute && selectedRoute == null // 최종 선택된 경로가 없을 때만 초기 경로 강조
+
+            val color = when {
+                isSelected -> androidx.compose.ui.graphics.Color.Green
+                isInitialNaverRoute -> androidx.compose.ui.graphics.Color.Red
+                else -> routeColors[index % routeColors.size]
+            }
+            val pathWidth = when {
+                isSelected -> 8.dp
+                isInitialNaverRoute -> 6.dp // 초기 네이버 경로도 두껍게
+                else -> 3.dp
+            }
+            val outline = when {
+                isSelected -> 1.dp
+                isInitialNaverRoute -> 1.dp // 초기 네이버 경로도 아웃라인
+                else -> 0.dp
+            }
 
             PathOverlay(
                 coords = route,
