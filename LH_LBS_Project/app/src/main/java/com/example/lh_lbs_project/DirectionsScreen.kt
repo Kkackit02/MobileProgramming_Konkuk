@@ -27,6 +27,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.naver.maps.geometry.LatLng
 import com.naver.maps.map.CameraPosition
+import com.naver.maps.map.CameraUpdate
+import com.naver.maps.geometry.LatLngBounds
 import com.naver.maps.map.compose.LocationTrackingMode
 import com.naver.maps.map.compose.*
 import kotlinx.coroutines.Dispatchers
@@ -37,6 +39,10 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.xmlpull.v1.XmlPullParser
 import org.xmlpull.v1.XmlPullParserFactory
+import java.net.URLEncoder
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
 import kotlin.math.asin
 import kotlin.math.cos
 import kotlin.math.pow
@@ -61,14 +67,17 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
     val cameraPositionState = rememberCameraPositionState()
     var routes by remember { mutableStateOf<List<List<LatLng>>>(emptyList()) }
     var incompleteSites by remember { mutableStateOf<List<LatLng>>(emptyList()) }
+    var drainpipeSites by remember { mutableStateOf<List<LatLng>>(emptyList()) } // 하수관로 데이터 추가
     var selectedRoute by remember { mutableStateOf<List<LatLng>?>(null) }
     var initialNaverRoute by remember { mutableStateOf<List<LatLng>?>(null) }
+    var isLoading by remember { mutableStateOf(true) } // 로딩 상태 추가
 
     val scope = rememberCoroutineScope()
     val start = LatLng(37.56694,  127.05250)
     val goal = LatLng( 37.59056,  127.03639)
 
     LaunchedEffect(Unit) {
+        isLoading = true // 데이터 로딩 시작
         cameraPositionState.position = CameraPosition(start, 11.0)
 
         scope.launch(Dispatchers.IO) {
@@ -85,6 +94,21 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
 
             val parsedSites = getSeoulData()?.let { parseIncompleteSites(it) } ?: emptyList()
             incompleteSites = parsedSites
+
+            // 하수관로 데이터 호출 및 파싱
+            val allPstnInfos = getDrainpipeData()
+            val geocodedDrainpipeSites = mutableListOf<LatLng>()
+            allPstnInfos.forEach { address ->
+                val latLng = geocodeAddress(address)
+                if (latLng != null) {
+                    geocodedDrainpipeSites.add(latLng)
+                }
+            }
+            drainpipeSites = geocodedDrainpipeSites
+            Log.d("DRAINPIPE_MARKER", "Number of drainpipe sites geocoded: ${drainpipeSites.size}")
+            drainpipeSites.forEachIndexed { index, latLng ->
+                Log.d("DRAINPIPE_MARKER", "Drainpipe site $index: Lat=${latLng.latitude}, Lng=${latLng.longitude}")
+            }
 
             var sitesOnRoutes: Map<Int, List<LatLng>> = emptyMap() // 스코프 확장
 
@@ -191,15 +215,6 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
                                 }
                                 if(bestRoute != null) selectedRoute = bestRoute
                             }
-                        } else {
-                            Log.d("ROUTE_SEARCH", "GPT로부터 경유지 추천을 받지 못했습니다. 기존 최선 경로를 표시합니다.")
-                            val bestRoute = candidateRoutes.minByOrNull { route ->
-                                val routeIndex = candidateRoutes.indexOf(route)
-                                val constructionCount = sitesOnRoutes[routeIndex]?.size ?: 0
-                                val routeLength = route.zipWithNext { a, b -> haversine(a.latitude, a.longitude, b.latitude, b.longitude) }.sum()
-                                constructionCount * 100000 + routeLength
-                            }
-                            if(bestRoute != null) selectedRoute = bestRoute
                         }
                     }
                     else -> {
@@ -216,6 +231,18 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
             }
             // --- 알고리즘 종료 ---
         }
+
+        // 모든 마커를 포함하도록 카메라 이동
+        val allMarkers = incompleteSites + drainpipeSites
+        if (allMarkers.isNotEmpty()) {
+            val bounds = LatLngBounds.Builder().apply {
+                allMarkers.forEach { include(it) }
+            }.build()
+            cameraPositionState.move(
+                CameraUpdate.fitBounds(bounds, 100) // 100dp 패딩
+            )
+        }
+        isLoading = false // 데이터 로딩 완료
     }
 
     var routeVisibility by remember { mutableStateOf<List<Boolean>>(emptyList()) }
@@ -272,57 +299,72 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
             }
         }
 
-        NaverMap(
-            modifier = Modifier.weight(1f),
-            cameraPositionState = cameraPositionState,
-        ) {
-            val routeColors = listOf(
-                androidx.compose.ui.graphics.Color.Blue,
-                androidx.compose.ui.graphics.Color.Yellow,
-                androidx.compose.ui.graphics.Color.Cyan,
-                androidx.compose.ui.graphics.Color.Magenta,
-                androidx.compose.ui.graphics.Color.Black,
-                androidx.compose.ui.graphics.Color.DarkGray,
-                androidx.compose.ui.graphics.Color.LightGray
-            )
+        if (isLoading) {
+            // 로딩 중일 때 표시할 UI (예: ProgressBar)
+            Text("데이터 로딩 중...", modifier = Modifier.padding(16.dp))
+        } else {
+            NaverMap(
+                modifier = Modifier.weight(1f),
+                cameraPositionState = cameraPositionState,
+            ) {
+                val routeColors = listOf(
+                    androidx.compose.ui.graphics.Color.Blue,
+                    androidx.compose.ui.graphics.Color.Yellow,
+                    androidx.compose.ui.graphics.Color.Cyan,
+                    androidx.compose.ui.graphics.Color.Magenta,
+                    androidx.compose.ui.graphics.Color.Black,
+                    androidx.compose.ui.graphics.Color.DarkGray,
+                    androidx.compose.ui.graphics.Color.LightGray
+                )
 
-            routes.forEachIndexed { index, route ->
-                if (routeVisibility.getOrElse(index) { true }) {
-                    val isSelected = route == selectedRoute
-                    val isInitialNaverRoute = route == initialNaverRoute
+                routes.forEachIndexed { index, route ->
+                    if (routeVisibility.getOrElse(index) { true }) {
+                        val isSelected = route == selectedRoute
+                        val isInitialNaverRoute = route == initialNaverRoute
 
-                    val color = when {
-                        isSelected -> androidx.compose.ui.graphics.Color.Green
-                        isInitialNaverRoute -> androidx.compose.ui.graphics.Color.Red
-                        else -> routeColors[index % routeColors.size]
-                    }
-                    val pathWidth = when {
-                        isSelected -> 8.dp
-                        isInitialNaverRoute -> 6.dp // 초기 네이버 경로도 두껍게
-                        else -> 3.dp
-                    }
-                    val outline = when {
-                        isSelected -> 1.dp
-                        isInitialNaverRoute -> 1.dp // 초기 네이버 경로도 아웃라인
-                        else -> 0.dp
-                    }
+                        val color = when {
+                            isSelected -> androidx.compose.ui.graphics.Color.Green
+                            isInitialNaverRoute -> androidx.compose.ui.graphics.Color.Red
+                            else -> routeColors[index % routeColors.size]
+                        }
+                        val pathWidth = when {
+                            isSelected -> 8.dp
+                            isInitialNaverRoute -> 6.dp // 초기 네이버 경로도 두껍게
+                            else -> 3.dp
+                        }
+                        val outline = when {
+                            isSelected -> 1.dp
+                            isInitialNaverRoute -> 1.dp // 초기 네이버 경로도 아웃라인
+                            else -> 0.dp
+                        }
 
-                    PathOverlay(
-                        coords = route,
-                        width = pathWidth,
-                        color = color,
-                        outlineWidth = outline
+                        PathOverlay(
+                            coords = route,
+                            width = pathWidth,
+                            color = color,
+                            outlineWidth = outline
+                        )
+                    }
+                }
+
+                incompleteSites.forEach { site ->
+                    Marker(
+                        state = MarkerState(position = site),
+                        captionText = "공사중",
+                        captionColor = androidx.compose.ui.graphics.Color.Magenta, // 겹치는 공사 현장은 자홍색
+                        iconTintColor = androidx.compose.ui.graphics.Color.Red // 아이콘 색상도 변경
                     )
                 }
-            }
 
-            incompleteSites.forEach { site ->
-                Marker(
-                    state = MarkerState(position = site),
-                    captionText = "공사중",
-                    captionColor = androidx.compose.ui.graphics.Color.Magenta, // 겹치는 공사 현장은 자홍색
-                    iconTintColor = androidx.compose.ui.graphics.Color.Red // 아이콘 색상도 변경
-                )
+                // 하수관로 마커 표시
+                drainpipeSites.forEach { site ->
+                    Marker(
+                        state = MarkerState(position = site),
+                        captionText = "하수관로",
+                        captionColor = androidx.compose.ui.graphics.Color.Blue,
+                        iconTintColor = androidx.compose.ui.graphics.Color.Blue
+                    )
+                }
             }
         }
     }
@@ -455,6 +497,53 @@ private fun getSeoulData(): String? {
     }
 }
 
+// ✅ 서울시 하수관로 데이터 호출
+private fun getDrainpipeData(): List<String> { // 반환 타입을 List<String>으로 변경
+    val allPstnInfos = mutableListOf<String>()
+    val calendar = Calendar.getInstance()
+    val dateFormat = SimpleDateFormat("yyyyMMddHH", Locale.getDefault())
+
+    val currentTime = calendar.time
+    val currentFormattedTime = dateFormat.format(currentTime)
+
+    calendar.add(Calendar.HOUR_OF_DAY, -1)
+    val oneHourAgoTime = calendar.time
+    val oneHourAgoFormattedTime = dateFormat.format(oneHourAgoTime)
+
+    val startTime = oneHourAgoFormattedTime
+    val endTime = currentFormattedTime
+
+    for (i in 1..25) {
+        val seCd = String.format("%02d", i)
+        val url = "http://openAPI.seoul.go.kr:8088/${BuildConfig.API_CLIENT_KEY}/xml/DrainpipeMonitoringInfo/1/1000/$seCd/$startTime/$endTime"
+
+        Log.d("API_CALL", "Calling getDrainpipeData API for seCd=$seCd. URL: $url")
+
+        val request = Request.Builder().url(url).build()
+        val client = OkHttpClient()
+        try {
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.e("DRAINPIPE_API_ERROR", "HTTP 오류 (seCd=$seCd): ${response.code}, ${response.message}")
+                    Log.e("API_CALL", "getDrainpipeData API Response (Error, seCd=$seCd): ${response.body?.string()}")
+                } else {
+                    val responseBody = response.body?.string()
+                    if (responseBody != null) {
+                        Log.d("API_CALL", "getDrainpipeData API Response (Success, seCd=$seCd): ${responseBody.take(500)}...")
+                        val parsedAddresses = parseDrainpipeSites(responseBody)
+                        Log.d("DRAINPIPE_DEBUG", "seCd=$seCd parsed ${parsedAddresses.size} addresses.") // 추가된 로그
+                        allPstnInfos.addAll(parsedAddresses)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("DRAINPIPE_API_ERROR", "예외 발생 (seCd=$seCd): ${e.message}", e)
+        }
+        Log.d("DRAINPIPE_DEBUG", "Total addresses collected so far: ${allPstnInfos.size}") // 추가된 로그
+    }
+    return allPstnInfos
+}
+
 // ✅ XML에서 공사 미완료(LAT, LOT)만 파싱
 fun parseIncompleteSites(xml: String): List<LatLng> {
     val list = mutableListOf<LatLng>()
@@ -495,6 +584,40 @@ fun parseIncompleteSites(xml: String): List<LatLng> {
     return list
 }
 
+// ✅ XML에서 하수관로 데이터 파싱 (LOC_X, LOC_Y 사용)
+fun parseDrainpipeSites(xml: String): List<String> { // 반환 타입을 List<String>으로 변경
+    val list = mutableListOf<String>()
+    val factory = XmlPullParserFactory.newInstance()
+    val parser = factory.newPullParser()
+    parser.setInput(xml.reader())
+
+    var eventType = parser.eventType
+    var pstnInfo: String? = null // PSTN_INFO를 저장할 변수
+    var tagName: String? = null
+
+    while (eventType != XmlPullParser.END_DOCUMENT) {
+        when (eventType) {
+            XmlPullParser.START_TAG -> tagName = parser.name
+            XmlPullParser.TEXT -> {
+                when (tagName) {
+                    "PSTN_INFO" -> pstnInfo = parser.text.trim() // PSTN_INFO 태그의 텍스트를 저장
+                }
+            }
+            XmlPullParser.END_TAG -> {
+                if (parser.name == "row") { // Assuming each record is within a <row> tag
+                    if (pstnInfo != null && pstnInfo.isNotEmpty()) {
+                        list += pstnInfo
+                    }
+                    pstnInfo = null // 초기화
+                }
+                tagName = null
+            }
+        }
+        eventType = parser.next()
+    }
+    return list
+}
+
 // 두 지점 간의 거리를 미터로 계산 (Haversine 공식)
 private fun haversine(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
     val r = 6371e3 // 지구 반지름 (미터)
@@ -510,6 +633,47 @@ private fun haversine(lat1: Double, lon1: Double, lat2: Double, lon2: Double): D
 
     return r * c
 }
+private fun geocodeAddress(address: String): LatLng? {
+    val encodedAddress = URLEncoder.encode(address, "UTF-8")
+    val url = "https://maps.apigw.ntruss.com/map-geocode/v2/geocode?query=$encodedAddress"
+
+    Log.d("API_CALL", "Calling geocodeAddress API. URL: $url")
+
+    val request = Request.Builder()
+        .url(url)
+        .addHeader("x-ncp-apigw-api-key-id", BuildConfig.NAVER_CLIENT_ID)
+        .addHeader("x-ncp-apigw-api-key", BuildConfig.NAVER_CLIENT_SECRET)
+        .addHeader("Accept", "application/json")
+        .build()
+
+    val client = OkHttpClient()
+    return try {
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                Log.e("GEOCODE_ERROR", "HTTP 오류: ${response.code}, ${response.message}")
+                Log.e("API_CALL", "geocodeAddress API Response (Error): ${response.body?.string()}")
+                return null
+            }
+            val responseBody = response.body?.string() ?: return null
+            Log.d("API_CALL", "geocodeAddress API Response (Success): ${responseBody.take(500)}...") // Log first 500 chars
+            val json = JSONObject(responseBody)
+
+            val addressesArray = json.getJSONArray("addresses")
+            if (addressesArray.length() > 0) {
+                val firstAddress = addressesArray.getJSONObject(0)
+                val x = firstAddress.getDouble("x") // longitude
+                val y = firstAddress.getDouble("y") // latitude
+                LatLng(y, x) // LatLng(latitude, longitude)
+            } else {
+                null
+            }
+        }
+    } catch (e: Exception) {
+        Log.e("GEOCODE_ERROR", "예외 발생: ${e.message}", e)
+        return null
+    }
+}
+
 
 // 한 점이 경로 위에 있는지 확인 (임계값 이내)
 private fun isLocationOnPath(location: LatLng, path: List<LatLng>, threshold: Double = 150.0): Boolean {
