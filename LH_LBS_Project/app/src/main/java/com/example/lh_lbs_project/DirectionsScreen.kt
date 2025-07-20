@@ -43,8 +43,10 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
     var incompleteSites by remember { mutableStateOf<List<LatLng>>(emptyList()) }
     val scope = rememberCoroutineScope()
 
-    val start = LatLng(37.566833,  127.05266)
-    val goal = LatLng( 37.56149,  127.06457)
+    val start = LatLng(37.56694,  127.05250)
+    val goal = LatLng( 37.59056,  127.03639)
+
+    var selectedRoute by remember { mutableStateOf<List<LatLng>?>(null) }
 
     LaunchedEffect(Unit) {
         cameraPositionState.position = CameraPosition(start, 11.0)
@@ -88,13 +90,13 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
                 if (sitesOnBestRoute.isEmpty()) {
                     Log.d("ROUTE_SEARCH", "🎉 안전 경로 발견! 탐색을 종료합니다.")
                     Log.d("ROUTE_DISPLAY", "Final safe route found. Routes count: 1")
-                    routes = listOf(bestRoute) // 안전 경로만 최종 표시
+                    selectedRoute = bestRoute // 안전 경로만 최종 표시
                     finalSafeRouteFound = true
                 } else {
                     // 6. 안전하지 않다면, 새로운 우회 경로 생성
                     Log.d("ROUTE_SEARCH", "안전하지 않음. 첫번째 공사장을 기준으로 우회 경로 4개를 생성합니다.")
                     val firstSite = sitesOnBestRoute.first()
-                    val detourDistance = 0.0005 * (currentAttempt) // 시도할수록 더 멀리 우회
+                    val detourDistance = 0.0009 * (currentAttempt) // 시도할수록 더 멀리 우회
                     val waypoints = listOf(
                         LatLng(firstSite.latitude, firstSite.longitude + detourDistance),
                         LatLng(firstSite.latitude, firstSite.longitude - detourDistance),
@@ -137,12 +139,18 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
                             candidateRoutes[candidateRoutesInfoForGpt.indexOf(chosenInfo)]
                         }
                         if (chosenRoute != null) {
-                            routes = listOf(chosenRoute) // GPT가 선택한 경로만 최종 표시
+                            selectedRoute = chosenRoute // GPT가 선택한 경로를 최종 경로로 설정
                             Log.d("ROUTE_DISPLAY", "GPT chosen route. Routes count: 1")
                             Log.d("ROUTE_SEARCH", "GPT가 경로 ${chosenRouteId}를 선택했습니다. 지도에 표시합니다.")
                         } else {
-                            Log.d("ROUTE_SEARCH", "GPT가 선택한 경로를 찾을 수 없습니다. 모든 후보 경로를 표시합니다.")
-                            routes = candidateRoutes
+                            Log.d("ROUTE_SEARCH", "GPT가 선택한 경로를 찾을 수 없습니다. 기존 최선 경로를 표시합니다.")
+                            val bestRoute = candidateRoutes.minByOrNull { route ->
+                                val routeIndex = candidateRoutes.indexOf(route)
+                                val constructionCount = sitesOnRoutes[routeIndex]?.size ?: 0
+                                val routeLength = route.zipWithNext { a, b -> haversine(a.latitude, a.longitude, b.latitude, b.longitude) }.sum()
+                                constructionCount * 100000 + routeLength
+                            }
+                            if(bestRoute != null) selectedRoute = bestRoute
                         }
                     }
                     "suggest_waypoints" -> {
@@ -151,12 +159,18 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
                             Log.d("ROUTE_SEARCH", "GPT로부터 ${gptWaypoints.size}개의 경유지 추천 받음.")
                             val gptRecommendedRoute = getDirectionsWithWaypoints(start, goal, gptWaypoints.first()) // GPT가 여러개 줘도 일단 첫번째만 사용
                             if (gptRecommendedRoute != null) {
-                                routes = listOf(gptRecommendedRoute) // GPT 추천 경로만 최종 표시
+                                selectedRoute = gptRecommendedRoute // GPT 추천 경로를 최종 경로로 설정
                                 Log.d("ROUTE_DISPLAY", "GPT recommended route. Routes count: 1")
                                 Log.d("ROUTE_SEARCH", "GPT 추천 경로를 지도에 표시합니다.")
                             } else {
-                                Log.d("ROUTE_SEARCH", "GPT 추천 경유지로 경로를 찾을 수 없습니다. 모든 후보 경로를 표시합니다.")
-                                routes = candidateRoutes
+                                Log.d("ROUTE_SEARCH", "GPT 추천 경유지로 경로를 찾을 수 없습니다. 기존 최선 경로를 표시합니다.")
+                                val bestRoute = candidateRoutes.minByOrNull { route ->
+                                    val routeIndex = candidateRoutes.indexOf(route)
+                                    val constructionCount = sitesOnRoutes[routeIndex]?.size ?: 0
+                                    val routeLength = route.zipWithNext { a, b -> haversine(a.latitude, a.longitude, b.latitude, b.longitude) }.sum()
+                                    constructionCount * 100000 + routeLength
+                                }
+                                if(bestRoute != null) selectedRoute = bestRoute
                             }
                         } else {
                             Log.d("ROUTE_SEARCH", "GPT로부터 경유지 추천을 받지 못했습니다. 기존 최선 경로를 표시합니다.")
@@ -166,12 +180,18 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
                                 val routeLength = route.zipWithNext { a, b -> haversine(a.latitude, a.longitude, b.latitude, b.longitude) }.sum()
                                 constructionCount * 100000 + routeLength
                             }
-                            if(bestRoute != null) routes = listOf(bestRoute)
+                            if(bestRoute != null) selectedRoute = bestRoute
                         }
                     }
                     else -> {
-                        Log.d("ROUTE_SEARCH", "GPT 응답이 유효하지 않거나 결정이 없습니다. 모든 후보 경로를 표시합니다.")
-                        routes = candidateRoutes
+                        Log.d("ROUTE_SEARCH", "GPT 응답이 유효하지 않거나 결정이 없습니다. 기존 최선 경로를 표시합니다.")
+                        val bestRoute = candidateRoutes.minByOrNull { route ->
+                            val routeIndex = candidateRoutes.indexOf(route)
+                            val constructionCount = sitesOnRoutes[routeIndex]?.size ?: 0
+                            val routeLength = route.zipWithNext { a, b -> haversine(a.latitude, a.longitude, b.latitude, b.longitude) }.sum()
+                            constructionCount * 100000 + routeLength
+                        }
+                        if(bestRoute != null) selectedRoute = bestRoute
                     }
                 }
             }
@@ -196,10 +216,11 @@ fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (Lat
         )
 
         routes.forEachIndexed { index, route ->
-            val color = if (routes.size == 1) androidx.compose.ui.graphics.Color.Green
+            val isSelected = route == selectedRoute
+            val color = if (isSelected) androidx.compose.ui.graphics.Color.Green
                         else routeColors[index % routeColors.size]
-            val pathWidth = if (routes.size == 1) 5.dp else 3.dp
-            val outline = if (routes.size == 1) 1.dp else 0.dp
+            val pathWidth = if (isSelected) 8.dp else 3.dp
+            val outline = if (isSelected) 1.dp else 0.dp
 
             PathOverlay(
                 coords = route,
