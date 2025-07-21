@@ -89,7 +89,7 @@ class MainActivity : ComponentActivity() {
                 JSONObject().apply {
                     put("id", routeInfo.id)
                     put("lengthKm", routeInfo.lengthKm)
-                    put("constructionSites", JSONArray(routeInfo.constructionSites.map { site ->
+                    put("hazardSites", JSONArray(routeInfo.hazardSites.map { site ->
                         JSONObject().apply { put("lat", site.latitude); put("lng", site.longitude) }
                     }))
                 }
