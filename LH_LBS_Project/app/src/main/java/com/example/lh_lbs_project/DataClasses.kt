@@ -22,3 +22,18 @@ data class RouteInfoForGpt(
     val hazardSites: List<LatLng>,
     val routeCoordinates: List<LatLng>
 )
+
+data class NoiseLevelInfo(
+    val address: String,
+    val noiseLevel: Double,
+    var location: LatLng? = null
+)
+
+data class SensorInfo(
+    val serialNo: String,
+    val modelName: String,
+    val address: String,
+    val latitude: Double,
+    val longitude: Double,
+    var location: LatLng? = null
+)

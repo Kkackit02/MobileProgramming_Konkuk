@@ -20,12 +20,14 @@ import org.json.JSONObject
 import com.example.lh_lbs_project.DrainpipeInfo
 import com.example.lh_lbs_project.GptRouteDecision
 import com.example.lh_lbs_project.RouteInfoForGpt
+import com.example.lh_lbs_project.NoiseLevelInfo
+import com.example.lh_lbs_project.SensorInfo
 
 sealed class Screen {
     object Title : Screen()
     object DataLoad : Screen()
-    data class MapSelection(val incompleteSites: List<LatLng>, val allDrainpipes: List<DrainpipeInfo>) : Screen()
-    data class Directions(val start: LatLng, val goal: LatLng, val incompleteSites: List<LatLng>, val allDrainpipes: List<DrainpipeInfo>) : Screen()
+    data class MapSelection(val incompleteSites: List<LatLng>, val allDrainpipes: List<DrainpipeInfo>, val allNoiseLevels: List<NoiseLevelInfo>, val allSensorInfo: List<SensorInfo>) : Screen()
+    data class Directions(val start: LatLng, val goal: LatLng, val incompleteSites: List<LatLng>, val allDrainpipes: List<DrainpipeInfo>, val allNoiseLevels: List<NoiseLevelInfo>, val allSensorInfo: List<SensorInfo>, val includeNoiseLevel: Boolean, val includeDrainpipe: Boolean, val includeConstruction: Boolean) : Screen()
 }
 
 class MainActivity : ComponentActivity() {
@@ -41,6 +43,8 @@ class MainActivity : ComponentActivity() {
                 var currentScreen by remember { mutableStateOf<Screen>(Screen.Title) }
                 var incompleteSitesData by remember { mutableStateOf<List<LatLng>>(emptyList()) }
                 var allDrainpipesData by remember { mutableStateOf<List<DrainpipeInfo>>(emptyList()) }
+                var allNoiseLevelsData by remember { mutableStateOf<List<NoiseLevelInfo>>(emptyList()) }
+                var allSensorInfoData by remember { mutableStateOf<List<SensorInfo>>(emptyList()) }
 
                 when (currentScreen) {
                     Screen.Title -> {
@@ -49,18 +53,22 @@ class MainActivity : ComponentActivity() {
                         })
                     }
                     Screen.DataLoad -> {
-                        DataLoadScreen(onDataLoaded = { incompleteSites, allDrainpipes ->
+                        DataLoadScreen(onDataLoaded = { incompleteSites, allDrainpipes, allNoiseLevels, allSensorInfo ->
                             incompleteSitesData = incompleteSites
                             allDrainpipesData = allDrainpipes
-                            currentScreen = Screen.MapSelection(incompleteSites, allDrainpipes)
+                            allNoiseLevelsData = allNoiseLevels
+                            allSensorInfoData = allSensorInfo
+                            currentScreen = Screen.MapSelection(incompleteSites, allDrainpipes, allNoiseLevels, allSensorInfo)
                         })
                     }
                     is Screen.MapSelection -> {
                         val screenState = currentScreen as Screen.MapSelection
                         MapSelectionScreen(
-                            onRouteSearch = { start, goal ->
-                                currentScreen = Screen.Directions(start, goal, screenState.incompleteSites, screenState.allDrainpipes)
-                            }
+                            onRouteSearch = { start, goal, includeNoiseLevel, includeDrainpipe, includeConstruction ->
+                                currentScreen = Screen.Directions(start, goal, screenState.incompleteSites, screenState.allDrainpipes, screenState.allNoiseLevels, screenState.allSensorInfo, includeNoiseLevel, includeDrainpipe, includeConstruction)
+                            },
+                            allNoiseLevels = screenState.allNoiseLevels,
+                            allSensorInfo = screenState.allSensorInfo
                         )
                     }
                     is Screen.Directions -> {
@@ -71,6 +79,11 @@ class MainActivity : ComponentActivity() {
                             goal = screenState.goal,
                             incompleteSites = screenState.incompleteSites,
                             allDrainpipes = screenState.allDrainpipes,
+                            allNoiseLevels = screenState.allNoiseLevels,
+                            allSensorInfo = screenState.allSensorInfo,
+                            includeNoiseLevel = screenState.includeNoiseLevel,
+                            includeDrainpipe = screenState.includeDrainpipe,
+                            includeConstruction = screenState.includeConstruction,
                             sendGptRequest = { start, goal, candidateRoutesInfo ->
                                 sendGptRequest(start, goal, candidateRoutesInfo)
                             }

@@ -34,33 +34,51 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import com.example.lh_lbs_project.DrainpipeInfo
+import java.io.File
+import android.content.Context
+import androidx.compose.ui.platform.LocalContext
+import java.io.BufferedReader
+
+import java.nio.charset.Charset
 
 @Composable
-fun DataLoadScreen(onDataLoaded: (List<LatLng>, List<DrainpipeInfo>) -> Unit) {
+fun DataLoadScreen(onDataLoaded: (List<LatLng>, List<DrainpipeInfo>, List<NoiseLevelInfo>, List<SensorInfo>) -> Unit) {
     var isLoading by remember { mutableStateOf(true) }
     var loadingMessage by remember { mutableStateOf("데이터 로딩 중...") }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current // context 선언 위치 변경
 
     LaunchedEffect(Unit) {
         scope.launch(Dispatchers.IO) {
             loadingMessage = "공사 현장 데이터 로딩 중..."
             val parsedConstructionSites = getSeoulData()?.let { parseIncompleteSites(it) } ?: emptyList()
 
-            loadingMessage = "하수관로 데이터 로딩 중..."
-            val allDrainpipeInfo = getDrainpipeData()
+             loadingMessage = "하수관로 데이터 로딩 중..."
+             val allDrainpipeInfo = getDrainpipeData()
 
-            loadingMessage = "하수관로 위치 정보 변환 중..."
-            allDrainpipeInfo.forEachIndexed { index, info ->
-                val latLng = geocodeAddress(info.address)
-                if (latLng != null) {
-                    info.location = latLng
-                }
-                loadingMessage = "하수관로 위치 정보 변환 중... (${index + 1}/${allDrainpipeInfo.size})"
-            }
-            val allGeocodedDrainpipes = allDrainpipeInfo.filter { it.location != null }
+             loadingMessage = "하수관로 위치 정보 변환 중..."
+             allDrainpipeInfo.forEachIndexed { index, info ->
+                 val latLng = geocodeAddress(info.address)
+                 if (latLng != null) {
+                     info.location = latLng
+                 }
+                 loadingMessage = "하수관로 위치 정보 변환 중... (${index + 1}/${allDrainpipeInfo.size})"
+             }
+            val allGeocodedDrainpipes = allDrainpipeInfo
+
+            loadingMessage = "센서 데이터 로딩 중..."
+            val allSensorInfo = loadSensorDataFromCsv(context)
+
+            loadingMessage = "소음도 데이터 로딩 중..."
+            val allNoiseLevelInfo = getNoiseLevelData(allSensorInfo)
 
             isLoading = false
-            onDataLoaded(parsedConstructionSites, allGeocodedDrainpipes)
+            onDataLoaded(
+                parsedConstructionSites as List<LatLng>,
+                allGeocodedDrainpipes as List<DrainpipeInfo>,
+                allNoiseLevelInfo as List<NoiseLevelInfo>,
+                allSensorInfo as List<SensorInfo>
+            )
         }
     }
 
@@ -146,6 +164,40 @@ private fun getDrainpipeData(): List<DrainpipeInfo> {
     allDrainpipeInfos.toList()
     } catch (e: Exception) {
         Log.e("DRAINPIPE_API_ERROR", "Unhandled exception in getDrainpipeData: ${e.message}", e)
+        emptyList()
+    }
+}
+
+// ✅ Fetch Seoul noise level data
+private fun getNoiseLevelData(allSensorInfo: List<SensorInfo>): List<NoiseLevelInfo> {
+    Log.d("NOISE_DEBUG", "getNoiseLevelData() called.")
+    Log.d("NOISE_DEBUG", "API_CLIENT_KEY: ${BuildConfig.API_CLIENT_KEY}")
+    return try {
+        val allNoiseLevelInfos = mutableListOf<NoiseLevelInfo>()
+        val url = "http://openapi.seoul.go.kr:8088/${BuildConfig.API_CLIENT_KEY}/xml/IotVdata017/1/1000/"
+
+        Log.d("API_CALL", "Calling getNoiseLevelData API. URL: $url")
+
+        val request = Request.Builder().url(url).build()
+        val client = OkHttpClient()
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                Log.e("NOISE_API_ERROR", "HTTP 오류: ${response.code}, ${response.message}")
+            } else {
+                val responseBody = response.body?.string()
+                Log.d("API_CALL", "getNoiseLevelData API Full Response (Success): $responseBody")
+                if (responseBody != null) {
+                    Log.d("API_CALL", "getNoiseLevelData API Response (Success): ${responseBody.take(500)}...")
+                    val parsedInfos = parseNoiseLevelSites(responseBody, allSensorInfo)
+                    Log.d("NOISE_DEBUG", "Parsed ${parsedInfos.size} noise level entries.")
+                    allNoiseLevelInfos.addAll(parsedInfos)
+                }
+            }
+        }
+        Log.d("NOISE_DEBUG", "Total noise level entries collected: ${allNoiseLevelInfos.size}")
+        allNoiseLevelInfos
+    } catch (e: Exception) {
+        Log.e("NOISE_API_ERROR", "Unhandled exception in getNoiseLevelData: ${e.message}", e)
         emptyList()
     }
 }
@@ -267,4 +319,93 @@ private fun geocodeAddress(address: String): LatLng? {
         Log.e("GEOCODE_ERROR", "예외 발생: ${e.message}", e)
         return null
     }
+}
+fun parseNoiseLevelSites(xml: String, allSensorInfo: List<SensorInfo>): List<NoiseLevelInfo> {
+    val list = mutableListOf<NoiseLevelInfo>()
+    val sensorMap = allSensorInfo.associateBy { it.serialNo.trim() } // map으로 만들기
+    val csvSerialSet = sensorMap.keys
+
+    val factory = XmlPullParserFactory.newInstance()
+    val parser = factory.newPullParser()
+    parser.setInput(xml.reader())
+
+    var eventType = parser.eventType
+    var apiSensorIdentifier: String? = null
+    var noiseLevel: Double? = null
+    var tagName: String? = null
+
+    while (eventType != XmlPullParser.END_DOCUMENT) {
+        when (eventType) {
+            XmlPullParser.START_TAG -> tagName = parser.name
+            XmlPullParser.TEXT -> {
+                when (tagName) {
+                    "SERIAL_NO" -> apiSensorIdentifier = parser.text.trim()
+                    "AVG_NOISE" -> noiseLevel = parser.text.toDoubleOrNull()
+                }
+            }
+            XmlPullParser.END_TAG -> {
+                if (parser.name == "row") {
+                    val serial = apiSensorIdentifier
+                    if (serial != null && noiseLevel != null) {
+                        val sensor = sensorMap[serial]
+                        if (sensor != null) {
+                            list.add(
+                                NoiseLevelInfo(
+                                    address = "",
+                                    noiseLevel = noiseLevel,
+                                    location = sensor.location
+                                )
+                            )
+                        } else {
+                            Log.w("NOISE_PARSE_WARNING", "센서 위치 못 찾음: $serial")
+                        }
+                    }
+                    apiSensorIdentifier = null
+                    noiseLevel = null
+                }
+                tagName = null
+            }
+        }
+        eventType = parser.next()
+    }
+    return list
+}
+
+
+private fun loadSensorDataFromCsv(context: Context): List<SensorInfo> {
+    val sensorList = mutableListOf<SensorInfo>()
+    val csvFileName = "data.csv"
+    Log.d("CSV_LOAD", "Attempting to load sensor data from assets: $csvFileName")
+    try {
+        context.assets.open(csvFileName).bufferedReader(Charset.forName("UTF-8")).useLines { lines: Sequence<String> ->
+            for (line in lines.drop(1)) { // Skip header row
+                Log.d("CSV_PARSE_DETAIL", "Processing line: $line")
+                val columns = line.split(',')
+                Log.d("CSV_PARSE_DETAIL", "Columns size: ${columns.size}")
+                if (columns.size >= 7) {
+                    try {
+                        val serialNo = columns[1].trim()             // V02Q1940059
+                        val modelName = "Unknown"                    // CSV에 없음 → 기본값 할당
+                        val address = columns[2].trim()              // 서울특별시 강남구 일원동 688
+                        val latitude = columns[4].toDouble()         // 37.4895...
+                        val longitude = columns[5].toDouble()        // 127.0753...
+
+                        val sensor = SensorInfo(serialNo, modelName, address, latitude, longitude, LatLng(latitude, longitude))
+                        Log.d("CSV_PARSE_DEBUG", "Loaded sensor serialNo from CSV: ${sensor.serialNo}, modelName: ${sensor.modelName}")
+                        sensorList.add(sensor)
+                    } catch (e: NumberFormatException) {
+                        Log.e("CSV_PARSE_ERROR", "Error parsing numbers in line: $line, Error: ${e.message}")
+                    } catch (e: Exception) {
+                        Log.e("CSV_PARSE_ERROR", "Error parsing line: $line, Error: ${e.message}")
+                    }
+                } else {
+                    Log.w("CSV_PARSE_WARNING", "Skipping malformed line (columns size ${columns.size} < 7): $line")
+                }
+            }
+        }
+    } catch (e: Exception) {
+        Log.e("CSV_LOAD_ERROR", "Error loading CSV file: ${e.message}", e)
+    }
+    Log.d("CSV_LOAD_SUCCESS", "Loaded ${sensorList.size} sensor entries from CSV.")
+    return sensorList
 }

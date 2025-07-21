@@ -55,6 +55,11 @@ fun DirectionsScreen(
     goal: LatLng,
     incompleteSites: List<LatLng>,
     allDrainpipes: List<DrainpipeInfo>,
+    allNoiseLevels: List<NoiseLevelInfo>,
+    allSensorInfo: List<SensorInfo>,
+    includeNoiseLevel: Boolean,
+    includeDrainpipe: Boolean,
+    includeConstruction: Boolean,
     sendGptRequest: suspend (LatLng, LatLng, List<RouteInfoForGpt>) -> GptRouteDecision?
 ) {
     val cameraPositionState = rememberCameraPositionState()
@@ -68,25 +73,50 @@ fun DirectionsScreen(
 
     var selectedTabIndex by remember { mutableStateOf(0) } // 0 for Map, 1 for Route Data
 
-    LaunchedEffect(start, goal, incompleteSites, allDrainpipes) {
+    LaunchedEffect(
+        start,
+        goal,
+        incompleteSites,
+        allDrainpipes,
+        allNoiseLevels,
+        includeNoiseLevel,
+        includeDrainpipe,
+        includeConstruction
+    ) {
         isLoading = true
         cameraPositionState.position = CameraPosition(start, 11.0)
 
         scope.launch(Dispatchers.IO) {
             // Filter for hazardous drainpipes (water level >= 20%)
-            val hazardousDrainpipeSites = allDrainpipes
-                .filter { it.waterLevel >= 0.20 }
-                .mapNotNull { it.location }
+            val hazardousDrainpipeSites = if (includeDrainpipe) {
+                allDrainpipes
+                    .filter { it.waterLevel >= 0.20 }
+                    .mapNotNull { it.location }
+            } else {
+                emptyList()
+            }
+
+            // Filter for hazardous noise levels (assuming a threshold for noiseLevel)
+            val hazardousNoiseLevelSites = if (includeNoiseLevel) {
+                allNoiseLevels
+                    .filter { it.noiseLevel >= 70.0 } // 70.0 이상을 위험으로 간주
+                    .mapNotNull { it.location }
+            } else {
+                emptyList()
+            }
 
             Log.d("DIRECTIONS_DEBUG", "Total drainpipes: ${allDrainpipes.size}")
             Log.d("DIRECTIONS_DEBUG", "Hazardous drainpipes: ${hazardousDrainpipeSites.size}")
+            Log.d("DIRECTIONS_DEBUG", "Total noise levels: ${allNoiseLevels.size}")
+            Log.d("DIRECTIONS_DEBUG", "Hazardous noise levels: ${hazardousNoiseLevelSites.size}")
+
 
             // --- Route Search Phase ---
-            var candidateRoutes = getDirections(start, goal) ?: emptyList()
+            var candidateRoutes: List<List<LatLng>> = getDirections(start, goal) ?: emptyList()
             initialNaverRoute = candidateRoutes.firstOrNull()
             routes = candidateRoutes
 
-            val maxAttempts = 3
+            val maxAttempts = 5
             var currentAttempt = 0
             var finalSafeRouteFound = false
 
@@ -94,26 +124,56 @@ fun DirectionsScreen(
                 currentAttempt++
                 Log.d("ROUTE_SEARCH", "--- Search Attempt: $currentAttempt ---")
 
-                val constructionSitesOnRoutes = findHazardSitesOnRoutes(candidateRoutes, incompleteSites, threshold = 150.0)
-                val drainpipeSitesOnRoutes = findHazardSitesOnRoutes(candidateRoutes, hazardousDrainpipeSites, threshold = 10.0)
-
-                allSitesOnRoutes = (constructionSitesOnRoutes.keys + drainpipeSitesOnRoutes.keys).associateWith { routeIndex ->
-                    (constructionSitesOnRoutes[routeIndex] ?: emptyList()) + (drainpipeSitesOnRoutes[routeIndex] ?: emptyList())
+                val constructionSitesOnRoutes = if (includeConstruction) {
+                    findHazardSitesOnRoutes(candidateRoutes, incompleteSites, threshold = 150.0)
+                } else {
+                    emptyMap()
                 }
+                val drainpipeSitesOnRoutes = findHazardSitesOnRoutes(
+                    candidateRoutes,
+                    hazardousDrainpipeSites,
+                    threshold = 10.0
+                )
+                val noiseLevelSitesOnRoutes = findHazardSitesOnRoutes(
+                    candidateRoutes,
+                    hazardousNoiseLevelSites,
+                    threshold = 10.0
+                ) // 소음도 데이터 추가
+                Log.d("ROUTE_SEARCH", "Noise level sites on routes: $noiseLevelSitesOnRoutes")
 
-                Log.d("ROUTE_SEARCH", "Found ${allSitesOnRoutes.values.sumOf { it.size }} total hazards on routes.")
+                allSitesOnRoutes =
+                    (constructionSitesOnRoutes.keys + drainpipeSitesOnRoutes.keys + noiseLevelSitesOnRoutes.keys).associateWith { routeIndex ->
+                        (constructionSitesOnRoutes[routeIndex] ?: emptyList()) +
+                                (drainpipeSitesOnRoutes[routeIndex] ?: emptyList()) +
+                                (noiseLevelSitesOnRoutes[routeIndex] ?: emptyList())
+                    }
 
-                val bestRoute = candidateRoutes.minByOrNull { route ->
+                Log.d(
+                    "ROUTE_SEARCH",
+                    "Found ${allSitesOnRoutes.values.sumOf { it.size }} total hazards on routes."
+                )
+
+                val bestRoute = candidateRoutes.minByOrNull { route: List<LatLng> ->
                     val routeIndex = candidateRoutes.indexOf(route)
                     val hazardCount = allSitesOnRoutes[routeIndex]?.size ?: 0
-                    val routeLength = route.zipWithNext { a, b -> haversine(a.latitude, a.longitude, b.latitude, b.longitude) }.sumOf { it }
+                    val routeLength = route.zipWithNext { a: LatLng, b: LatLng ->
+                        haversine(
+                            a.latitude,
+                            a.longitude,
+                            b.latitude,
+                            b.longitude
+                        )
+                    }.sum()
                     hazardCount * 100000.0 + routeLength
                 }!!
 
                 val bestRouteIndex = candidateRoutes.indexOf(bestRoute)
                 val sitesOnBestRoute = allSitesOnRoutes[bestRouteIndex] ?: emptyList()
 
-                Log.d("ROUTE_SEARCH", "Best candidate: Route ${bestRouteIndex + 1} (Hazards: ${sitesOnBestRoute.size})")
+                Log.d(
+                    "ROUTE_SEARCH",
+                    "Best candidate: Route ${bestRouteIndex + 1} (Hazards: ${sitesOnBestRoute.size})"
+                )
 
                 if (sitesOnBestRoute.isEmpty()) {
                     Log.d("ROUTE_SEARCH", "🎉 Safe route found!")
@@ -121,13 +181,22 @@ fun DirectionsScreen(
                     finalSafeRouteFound = true
                 } else {
                     val firstSite = sitesOnBestRoute.first()
-                    Log.d("ROUTE_SEARCH", "Unsafe route. First hazard at: ${firstSite.latitude}, ${firstSite.longitude}")
+                    Log.d(
+                        "ROUTE_SEARCH",
+                        "Unsafe route. First hazard at: ${firstSite.latitude}, ${firstSite.longitude}"
+                    )
 
                     val detourDistance = if (hazardousDrainpipeSites.contains(firstSite)) {
                         Log.d("ROUTE_SEARCH", "Hazard is a drainpipe. Detouring by 20m.")
                         0.00018 // Approx 20 meters
+                    } else if (hazardousNoiseLevelSites.contains(firstSite)) { // 소음도 위험 지역 처리
+                        Log.d("ROUTE_SEARCH", "Hazard is a noise level site. Detouring by 150m.")
+                        0.00135 // Approx 150 meters
                     } else {
-                        Log.d("ROUTE_SEARCH", "Hazard is a construction site. Detouring by ${100 * currentAttempt}m.")
+                        Log.d(
+                            "ROUTE_SEARCH",
+                            "Hazard is a construction site. Detouring by ${100 * currentAttempt}m."
+                        )
                         0.0027 // Approx 300 meters
                     }
 
@@ -140,11 +209,16 @@ fun DirectionsScreen(
                         LatLng(firstSite.latitude + detourDistance, firstSite.longitude), // North
                         LatLng(firstSite.latitude - detourDistance, firstSite.longitude)  // South
                     )
-                    val detourWaypoint = randomDirectionWaypoints[Random.nextInt(randomDirectionWaypoints.size)]
+                    val detourWaypoint =
+                        randomDirectionWaypoints[Random.nextInt(randomDirectionWaypoints.size)]
                     waypoints.add(detourWaypoint)
-                    Log.d("ROUTE_SEARCH", "Generated 1 detour waypoint in a random cardinal direction around the hazard.")
+                    Log.d(
+                        "ROUTE_SEARCH",
+                        "Generated 1 detour waypoint in a random cardinal direction around the hazard."
+                    )
 
-                    val newDetourRoutes = listOfNotNull(getDirectionsWithWaypoints(start, goal, waypoints))
+                    val newDetourRoutes =
+                        listOfNotNull(getDirectionsWithWaypoints(start, goal, waypoints))
                     candidateRoutes = newDetourRoutes
                     routes = (routes + newDetourRoutes).distinct()
                 }
@@ -154,7 +228,14 @@ fun DirectionsScreen(
                 Log.d("ROUTE_SEARCH", "No safe route found. Consulting GPT.")
                 selectedTabIndex = 1 // Switch to Route Data tab
                 val top3CandidateRoutesInfoForGpt = candidateRoutes.mapIndexed { index, route ->
-                    val routeLength = route.zipWithNext { a, b -> haversine(a.latitude, a.longitude, b.latitude, b.longitude) }.sumOf { it }
+                    val routeLength = route.zipWithNext { a: LatLng, b: LatLng ->
+                        haversine(
+                            a.latitude,
+                            a.longitude,
+                            b.latitude,
+                            b.longitude
+                        )
+                    }.sum()
                     RouteInfoForGpt(
                         id = "route_${index + 1}",
                         lengthKm = routeLength / 1000.0,
@@ -163,7 +244,7 @@ fun DirectionsScreen(
                     )
                 }
                     .sortedWith(compareBy({ it.hazardSites.size }, { it.lengthKm }))
-                    .take(2)
+                    .take(3)
 
                 val gptDecision = sendGptRequest(start, goal, top3CandidateRoutesInfoForGpt)
                 when (gptDecision?.decision) {
@@ -176,15 +257,18 @@ fun DirectionsScreen(
                             selectedRoute = candidateRoutes.firstOrNull()
                         }
                     }
+
                     "suggest_waypoints" -> {
                         val gptWaypoints = gptDecision.waypoints
                         if (gptWaypoints != null && gptWaypoints.isNotEmpty()) {
-                            val gptRecommendedRoute = getDirectionsWithWaypoints(start, goal, gptWaypoints)
+                            val gptRecommendedRoute =
+                                getDirectionsWithWaypoints(start, goal, gptWaypoints)
                             selectedRoute = gptRecommendedRoute ?: candidateRoutes.firstOrNull()
                         } else {
                             selectedRoute = candidateRoutes.firstOrNull()
                         }
                     }
+
                     else -> {
                         selectedRoute = candidateRoutes.firstOrNull()
                     }
@@ -193,16 +277,22 @@ fun DirectionsScreen(
 
             // --- UI Update ---
             isLoading = false // Hide loading indicator
-            val allMarkers = incompleteSites + allDrainpipes.mapNotNull { it.location }
+            val allMarkers = mutableListOf<LatLng>()
+            if (includeConstruction) allMarkers.addAll(incompleteSites)
+            if (includeDrainpipe) allMarkers.addAll(allDrainpipes.mapNotNull { it.location })
+            if (includeNoiseLevel) allMarkers.addAll(allNoiseLevels.mapNotNull { it.location }) // 소음도 마커 추가
+
             if (allMarkers.isNotEmpty()) {
-                val bounds = LatLngBounds.Builder().apply { allMarkers.forEach { include(it) } }.build()
+                val bounds =
+                    LatLngBounds.Builder().apply { allMarkers.forEach { include(it) } }.build()
                 cameraPositionState.move(CameraUpdate.fitBounds(bounds, 100))
             }
 
             // Adjust camera to fit the selected route
             selectedRoute?.let { route ->
                 if (route.isNotEmpty()) {
-                    val routeBounds = LatLngBounds.Builder().apply { route.forEach { include(it) } }.build()
+                    val routeBounds =
+                        LatLngBounds.Builder().apply { route.forEach { include(it) } }.build()
                     cameraPositionState.move(CameraUpdate.fitBounds(routeBounds, 100))
                 }
             }
@@ -211,8 +301,14 @@ fun DirectionsScreen(
 
     Column(modifier = modifier.fillMaxSize()) {
         TabRow(selectedTabIndex = selectedTabIndex) {
-            Tab(selected = selectedTabIndex == 0, onClick = { selectedTabIndex = 0 }, text = { Text("지도") })
-            Tab(selected = selectedTabIndex == 1, onClick = { selectedTabIndex = 1 }, text = { Text("경로 데이터") })
+            Tab(
+                selected = selectedTabIndex == 0,
+                onClick = { selectedTabIndex = 0 },
+                text = { Text("지도") })
+            Tab(
+                selected = selectedTabIndex == 1,
+                onClick = { selectedTabIndex = 1 },
+                text = { Text("경로 데이터") })
         }
 
         when (selectedTabIndex) {
@@ -273,7 +369,15 @@ fun DirectionsScreen(
                             modifier = Modifier.weight(1f),
                             cameraPositionState = cameraPositionState,
                         ) {
-                            val routeColors = listOf(Color.Blue, Color.Yellow, Color.Cyan, Color.Magenta, Color.Black, Color.DarkGray, Color.LightGray)
+                            val routeColors = listOf(
+                                Color.Blue,
+                                Color.Yellow,
+                                Color.Cyan,
+                                Color.Magenta,
+                                Color.Black,
+                                Color.DarkGray,
+                                Color.LightGray
+                            )
 
                             routes.forEachIndexed { index, route ->
                                 if (routeVisibility.getOrElse(index) { true }) {
@@ -284,60 +388,114 @@ fun DirectionsScreen(
                                         isInitialNaverRoute -> Color.Red
                                         else -> routeColors[index % routeColors.size]
                                     }
-                                    val pathWidth = if (isSelected) 8.dp else if (isInitialNaverRoute) 6.dp else 3.dp
-                                    val outline = if (isSelected || isInitialNaverRoute) 1.dp else 0.dp
+                                    val pathWidth =
+                                        if (isSelected) 8.dp else if (isInitialNaverRoute) 6.dp else 3.dp
+                                    val outline =
+                                        if (isSelected || isInitialNaverRoute) 1.dp else 0.dp
 
-                                    PathOverlay(coords = route, width = pathWidth, color = color, outlineWidth = outline)
+                                    PathOverlay(
+                                        coords = route,
+                                        width = pathWidth,
+                                        color = color,
+                                        outlineWidth = outline
+                                    )
                                 }
                             }
 
                             incompleteSites.forEach { site ->
-                                Marker(state = MarkerState(position = site), captionText = "공사중", iconTintColor = Color.Magenta)
-                                CircleOverlay(
-                                    center = site,
-                                    radius = 150.0, // 150 meters for construction sites
-                                    color = Color.Magenta.copy(alpha = 0.2f), // Semi-transparent fill
-                                    outlineColor = Color.Magenta,
-                                    outlineWidth = 1.dp
-                                )
+                                if (includeConstruction) {
+                                    Marker(
+                                        state = MarkerState(position = site),
+                                        captionText = "공사중",
+                                        iconTintColor = Color.Magenta
+                                    )
+                                    CircleOverlay(
+                                        center = site,
+                                        radius = 150.0, // 150 meters for construction sites
+                                        color = Color.Magenta.copy(alpha = 0.2f), // Semi-transparent fill
+                                        outlineColor = Color.Magenta,
+                                        outlineWidth = 1.dp
+                                    )
+                                }
                             }
 
                             // Display all drainpipes with color coding and radius
                             allDrainpipes.forEach { drainpipe ->
                                 drainpipe.location?.let {
-                                    Log.d("DIRECTIONS_DEBUG", "Drainpipe location: ${it.latitude}, ${it.longitude}")
-                                    val isHazardous = drainpipe.waterLevel >= 20.0
-                                    val color = if (isHazardous) Color.Red else Color.Blue
-                                    val caption = if (isHazardous) "위험 하수관로" else "하수관로"
+                                    if (includeDrainpipe) {
+                                        Log.d(
+                                            "DIRECTIONS_DEBUG",
+                                            "Drainpipe location: ${it.latitude}, ${it.longitude}"
+                                        )
+                                        val isHazardous = drainpipe.waterLevel >= 20.0
+                                        val color = if (isHazardous) Color.Red else Color.Blue
+                                        val caption = if (isHazardous) "위험 하수관로" else "하수관로"
 
-                                    Marker(
-                                        state = MarkerState(position = it),
-                                        captionText = caption,
-                                        iconTintColor = color,
-                                        captionColor = color
-                                    )
+                                        Marker(
+                                            state = MarkerState(position = it),
+                                            captionText = caption,
+                                            iconTintColor = color,
+                                            captionColor = color
+                                        )
 
-                                    CircleOverlay(
-                                        center = it,
-                                        radius = if (isHazardous) 10.0 else 5.0, // 10 meters for hazardous, 5 meters for normal
-                                        color = color.copy(alpha = 0.2f), // Semi-transparent fill based on marker color
-                                        outlineColor = color,
-                                        outlineWidth = 1.dp
-                                    )
+                                        CircleOverlay(
+                                            center = it,
+                                            radius = if (isHazardous) 10.0 else 5.0, // 10 meters for hazardous, 5 meters for normal
+                                            color = color.copy(alpha = 0.2f), // Semi-transparent fill based on marker color
+                                            outlineColor = color,
+                                            outlineWidth = 1.dp
+                                        )
+                                    }
+                                }
+                            }
+
+                            allNoiseLevels.forEach { noiseLevelInfo ->
+                                noiseLevelInfo.location?.let {
+                                    if (includeNoiseLevel) {
+                                        val isHazardous =
+                                            noiseLevelInfo.noiseLevel >= 70.0 // 70.0 이상을 위험으로 간주
+                                        val color = if (isHazardous) Color.Red else Color.Cyan
+                                        val caption = if (isHazardous) "위험 소음" else "소음"
+
+                                        Marker(
+                                            state = MarkerState(position = it),
+                                            captionText = caption,
+                                            iconTintColor = color,
+                                            captionColor = color
+                                        )
+
+                                        CircleOverlay(
+                                            center = it,
+                                            radius = if (isHazardous) 150.0 else 5.0, // 위험 소음은 150m, 일반 소음은 5m
+                                            color = color.copy(alpha = 0.2f), // Semi-transparent fill based on marker color
+                                            outlineColor = color,
+                                            outlineWidth = 1.dp
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
                 }
             }
+
             1 -> { // Route Data Tab
                 val routeDisplayInfos = routes.mapIndexed { index, route ->
                     val hazardCount = allSitesOnRoutes[index]?.size ?: 0
-                    val routeLength = route.zipWithNext { a, b -> haversine(a.latitude, a.longitude, b.latitude, b.longitude) }.sumOf { it }
+                    val routeLength = route.zipWithNext { a: LatLng, b: LatLng ->
+                    haversine(
+                            a.latitude,
+                            a.longitude,
+                            b.latitude,
+                            b.longitude
+                        )
+                    }.sum()
 
                     val currentRouteHazards = allSitesOnRoutes[index] ?: emptyList()
-                    val otherRoutesHazards = allSitesOnRoutes.filterKeys { it != index }.values.flatten()
-                    val overlappingHazardSitesCount = currentRouteHazards.intersect(otherRoutesHazards.toSet()).size
+                    val otherRoutesHazards =
+                        allSitesOnRoutes.filterKeys { it != index }.values.flatten()
+                    val overlappingHazardSitesCount =
+                        currentRouteHazards.intersect(otherRoutesHazards.toSet()).size
 
                     val firstHazardSite = currentRouteHazards.firstOrNull()
                     val distanceToFirstHazard = if (firstHazardSite != null && route.isNotEmpty()) {
@@ -346,10 +504,21 @@ fun DirectionsScreen(
                         for (i in 0 until route.size - 1) {
                             val segmentStart = route[i]
                             val segmentEnd = route[i + 1]
-                            val distToSegmentEnd = haversine(segmentStart.latitude, segmentStart.longitude, segmentEnd.latitude, segmentEnd.longitude)
+                            val distToSegmentEnd = haversine(
+                                segmentStart.latitude,
+                                segmentStart.longitude,
+                                segmentEnd.latitude,
+                                segmentEnd.longitude
+                            )
                             dist += distToSegmentEnd
                             // Simple check: if the hazard is close to the segment end, consider this the point
-                            if (haversine(firstHazardSite.latitude, firstHazardSite.longitude, segmentEnd.latitude, segmentEnd.longitude) < 50) { // 50m threshold
+                            if (haversine(
+                                    firstHazardSite.latitude,
+                                    firstHazardSite.longitude,
+                                    segmentEnd.latitude,
+                                    segmentEnd.longitude
+                                ) < 50
+                            ) { // 50m threshold
                                 break
                             }
                         }
@@ -373,8 +542,9 @@ fun DirectionsScreen(
     }
 }
 
+
 // ✅ 네이버 경로 API 호출
-private fun getDirections(start: LatLng, goal: LatLng): List<List<LatLng>>? {
+fun getDirections(start: LatLng, goal: LatLng): List<List<LatLng>>? {
     val url = "https://maps.apigw.ntruss.com/map-direction/v1/driving" +
             "?start=${start.longitude},${start.latitude}" +
             "&goal=${goal.longitude},${goal.latitude}" +
@@ -407,8 +577,8 @@ private fun getDirections(start: LatLng, goal: LatLng): List<List<LatLng>>? {
                     val routeArray = routeObject.getJSONArray(key)
                     if (routeArray.length() > 0) {
                         val pathArray = routeArray.getJSONObject(0).getJSONArray("path")
-                        val path = (0 until pathArray.length()).map {
-                            val point = pathArray.getJSONArray(it)
+                        val path = (0 until pathArray.length()).map { i ->
+                            val point = pathArray.getJSONArray(i)
                             LatLng(point.getDouble(1), point.getDouble(0))
                         }
                         allRoutes.add(path)
@@ -424,7 +594,7 @@ private fun getDirections(start: LatLng, goal: LatLng): List<List<LatLng>>? {
 }
 
 // ✅ 경유지를 포함한 네이버 경로 API 호출
-private fun getDirectionsWithWaypoints(start: LatLng, goal: LatLng, waypoints: List<LatLng>): List<LatLng>? {
+fun getDirectionsWithWaypoints(start: LatLng, goal: LatLng, waypoints: List<LatLng>): List<LatLng>? {
     val waypointsString = waypoints.take(5).joinToString("_") { "${it.longitude},${it.latitude}" }
     val url = "https://maps.apigw.ntruss.com/map-direction/v1/driving" +
             "?start=${start.longitude},${start.latitude}" +
@@ -459,8 +629,8 @@ private fun getDirectionsWithWaypoints(start: LatLng, goal: LatLng, waypoints: L
                     val routeArray = routeObject.getJSONArray("traoptimal")
                     if (routeArray.length() > 0) {
                         val pathArray = routeArray.getJSONObject(0).getJSONArray("path")
-                        return (0 until pathArray.length()).map {
-                            val point = pathArray.getJSONArray(it)
+                        return (0 until pathArray.length()).map { i ->
+                            val point = pathArray.getJSONArray(i)
                             LatLng(point.getDouble(1), point.getDouble(0))
                         }
                     }
@@ -473,54 +643,3 @@ private fun getDirectionsWithWaypoints(start: LatLng, goal: LatLng, waypoints: L
         null
     }
 }
-
-// Haversine formula to calculate distance between two LatLng points in meters
-fun haversine(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
-    val R = 6371000.0 // Earth's radius in meters
-    val dLat = Math.toRadians(lat2 - lat1)
-    val dLon = Math.toRadians(lon2 - lon1)
-    val a = kotlin.math.sin(dLat / 2) * kotlin.math.sin(dLat / 2) +
-            kotlin.math.cos(Math.toRadians(lat1)) * kotlin.math.cos(Math.toRadians(lat2)) *
-            kotlin.math.sin(dLon / 2) * kotlin.math.sin(dLon / 2)
-    val c = 2 * kotlin.math.atan2(kotlin.math.sqrt(a), kotlin.math.sqrt(1 - a))
-    return R * c
-}
-
-// Function to find hazard sites on routes
-fun findHazardSitesOnRoutes(
-    routes: List<List<LatLng>>,
-    hazardSites: List<LatLng>,
-    threshold: Double
-): Map<Int, List<LatLng>> {
-    val sitesOnRoutes = mutableMapOf<Int, MutableList<LatLng>>()
-
-    routes.forEachIndexed { routeIndex, route ->
-        val hazardsOnCurrentRoute = mutableListOf<LatLng>()
-        hazardSites.forEach { hazardSite ->
-            // Check if the hazard site is close to any segment of the route
-            for (i in 0 until route.size - 1) {
-                val startPoint = route[i]
-                val endPoint = route[i + 1]
-
-                // Simplified check: distance from hazard to start/end points of segment
-                // A more robust solution would involve projecting the point onto the segment
-                val distToStart = haversine(hazardSite.latitude, hazardSite.longitude, startPoint.latitude, startPoint.longitude)
-                val distToEnd = haversine(hazardSite.latitude, hazardSite.longitude, endPoint.latitude, endPoint.longitude)
-
-                if (distToStart <= threshold || distToEnd <= threshold) {
-                    hazardsOnCurrentRoute.add(hazardSite)
-                    break // Found a hazard on this route segment, move to next hazard site
-                }
-            }
-        }
-        if (hazardsOnCurrentRoute.isNotEmpty()) {
-            sitesOnRoutes[routeIndex] = hazardsOnCurrentRoute
-        }
-    }
-    return sitesOnRoutes
-}
-
-
-
-
-
