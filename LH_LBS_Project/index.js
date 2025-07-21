@@ -28,17 +28,23 @@ Here are the candidate routes:
                 prompt += `
 --- Candidate Route ${index + 1} (ID: ${route.id}) ---
   Length: ${route.lengthKm} km
-  Construction Zones: ${route.constructionSites.length} zones
+  Construction Zones: ${route.hazardSites.length} zones
 `;
-                if (route.constructionSites.length > 0) {
-                    prompt += `  Locations: ${route.constructionSites.map(s => `(${s.lat}, ${s.lng})`).join(', ')}
+                if (route.hazardSites.length > 0) {
+                    prompt += `  Locations: ${route.hazardSites.map(s => `(${s.lat}, ${s.lng})`).join(', ')}
+`;
+                }
+                if (route.routeCoordinates && route.routeCoordinates.length > 0) {
+                    // Include all coordinates for detailed analysis
+                    const coordsString = route.routeCoordinates.map(c => `(${c.lat},${c.lng})`).join(';');
+                    prompt += `  Full Path Coordinates: ${coordsString}
 `;
                 }
             });
 
             prompt += `
 Your task is to:
-1. If one of the existing candidate routes is the best option (e.g., has no construction, or is the least affected), recommend it by its ID.
+1. Analyze the geographical shape of each route using the provided full path coordinates, considering their relation to hazard sites. Select the safest and most efficient route.
 2. If all existing routes have construction and you can suggest a better alternative, provide up to 2 intermediate waypoints (lat/lng) that help avoid these zones, following likely roads or real paths.
 
 Respond ONLY with JSON in this format, with NO extra explanation:
@@ -46,7 +52,7 @@ Respond ONLY with JSON in this format, with NO extra explanation:
 Option 1: Recommend an existing route
 {
   "decision": "choose_route",
-  "chosenRouteId": "[ID of the chosen route, e.g., optimal, comfort, detour1]"
+  "chosenRouteIndex": [Index of the chosen route, 0-based]
 }
 
 Option 2: Suggest new waypoints
@@ -88,7 +94,7 @@ Option 2: Suggest new waypoints
 
             const json = JSON.parse(match[0]);
             // Basic validation for GPT's response structure
-            if (!json.decision || (json.decision === "choose_route" && !json.chosenRouteId) || (json.decision === "suggest_waypoints" && (!json.waypoints || !Array.isArray(json.waypoints)))) {
+            if (!json.decision || (json.decision === "choose_route" && (json.chosenRouteIndex === undefined || typeof json.chosenRouteIndex !== 'number')) || (json.decision === "suggest_waypoints" && (!json.waypoints || !Array.isArray(json.waypoints)))) {
                 console.error("GPT response has invalid structure:", json);
                 return res.status(500).json({ error: "Invalid GPT response structure." });
             }
