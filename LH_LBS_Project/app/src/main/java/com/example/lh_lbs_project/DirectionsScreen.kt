@@ -2,26 +2,17 @@ package com.example.lh_lbs_project
 
 import android.util.Log
 import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
@@ -29,7 +20,6 @@ import com.naver.maps.geometry.LatLng
 import com.naver.maps.map.CameraPosition
 import com.naver.maps.map.CameraUpdate
 import com.naver.maps.geometry.LatLngBounds
-import com.naver.maps.map.compose.LocationTrackingMode
 import com.naver.maps.map.compose.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -37,342 +27,524 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
-import org.xmlpull.v1.XmlPullParser
-import org.xmlpull.v1.XmlPullParserFactory
-import java.net.URLEncoder
-import java.text.SimpleDateFormat
-import java.util.Calendar
-import java.util.Locale
-import kotlin.math.asin
-import kotlin.math.cos
-import kotlin.math.pow
-import kotlin.math.sin
+import kotlin.random.Random
 import kotlin.math.sqrt
 
-data class GptRouteDecision(
-    val decision: String,
-    val chosenRouteId: String? = null,
-    val waypoints: List<LatLng>? = null
-)
+// Import data classes from the common file
+import com.example.lh_lbs_project.DrainpipeInfo
+import com.example.lh_lbs_project.GptRouteDecision
+import com.example.lh_lbs_project.RouteInfoForGpt
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
+import com.example.lh_lbs_project.RouteDataDisplayView
 
-data class RouteInfoForGpt(
+data class RouteDisplayInfo(
     val id: String,
     val lengthKm: Double,
-    val constructionSites: List<LatLng>
+    val hazardSitesCount: Int,
+    val overlappingHazardSitesCount: Int,
+    val distanceToFirstHazard: Double?,
+    val routeCoordinates: List<LatLng>
 )
 
 @OptIn(ExperimentalNaverMapApi::class)
 @Composable
-fun DirectionsScreen(modifier: Modifier = Modifier, sendGptRequest: suspend (LatLng, LatLng, List<RouteInfoForGpt>) -> GptRouteDecision?) {
+fun DirectionsScreen(
+    modifier: Modifier = Modifier,
+    start: LatLng,
+    goal: LatLng,
+    incompleteSites: List<LatLng>,
+    allDrainpipes: List<DrainpipeInfo>,
+    allNoiseLevels: List<NoiseLevelInfo>,
+    allSensorInfo: List<SensorInfo>,
+    includeNoiseLevel: Boolean,
+    includeDrainpipe: Boolean,
+    includeConstruction: Boolean,
+    sendGptRequest: suspend (LatLng, LatLng, List<RouteInfoForGpt>) -> GptRouteDecision?
+) {
     val cameraPositionState = rememberCameraPositionState()
     var routes by remember { mutableStateOf<List<List<LatLng>>>(emptyList()) }
-    var incompleteSites by remember { mutableStateOf<List<LatLng>>(emptyList()) }
-    var drainpipeSites by remember { mutableStateOf<List<LatLng>>(emptyList()) } // 하수관로 데이터 추가
     var selectedRoute by remember { mutableStateOf<List<LatLng>?>(null) }
     var initialNaverRoute by remember { mutableStateOf<List<LatLng>?>(null) }
-    
+    var isLoading by remember { mutableStateOf(true) } // Loading state
+    var allSitesOnRoutes by remember { mutableStateOf<Map<Int, List<LatLng>>>(emptyMap()) }
 
     val scope = rememberCoroutineScope()
-    val start = LatLng(37.56694,  127.05250)
-    val goal = LatLng( 37.59056,  127.03639)
 
-    LaunchedEffect(Unit) {
+    var selectedTabIndex by remember { mutableStateOf(0) } // 0 for Map, 1 for Route Data
+
+    LaunchedEffect(
+        start,
+        goal,
+        incompleteSites,
+        allDrainpipes,
+        allNoiseLevels,
+        includeNoiseLevel,
+        includeDrainpipe,
+        includeConstruction
+    ) {
+        isLoading = true
         cameraPositionState.position = CameraPosition(start, 11.0)
 
         scope.launch(Dispatchers.IO) {
-            // --- 반복적 경로 탐색 알고리즘 시작 ---
-            val maxAttempts = 3
+            // Filter for hazardous drainpipes (water level >= 20%)
+            val hazardousDrainpipeSites = if (includeDrainpipe) {
+                allDrainpipes
+                    .filter { it.waterLevel >= 0.20 }
+                    .mapNotNull { it.location }
+            } else {
+                emptyList()
+            }
+
+            // Filter for hazardous noise levels (assuming a threshold for noiseLevel)
+            val hazardousNoiseLevelSites = if (includeNoiseLevel) {
+                allNoiseLevels
+                    .filter { it.noiseLevel >= 70.0 } // 70.0 이상을 위험으로 간주
+                    .mapNotNull { it.location }
+            } else {
+                emptyList()
+            }
+
+            Log.d("DIRECTIONS_DEBUG", "Total drainpipes: ${allDrainpipes.size}")
+            Log.d("DIRECTIONS_DEBUG", "Hazardous drainpipes: ${hazardousDrainpipeSites.size}")
+            Log.d("DIRECTIONS_DEBUG", "Total noise levels: ${allNoiseLevels.size}")
+            Log.d("DIRECTIONS_DEBUG", "Hazardous noise levels: ${hazardousNoiseLevelSites.size}")
+
+
+            // --- Route Search Phase ---
+            var candidateRoutes: List<List<LatLng>> = getDirections(start, goal) ?: emptyList()
+            initialNaverRoute = candidateRoutes.firstOrNull()
+            routes = candidateRoutes
+
+            val maxAttempts = 5
             var currentAttempt = 0
             var finalSafeRouteFound = false
 
-            // 1. 최초 대안 경로 요청
-            var candidateRoutes = getDirections(start, goal) ?: emptyList()
-            initialNaverRoute = candidateRoutes.firstOrNull() // 첫 번째 경로를 초기 네이버 경로로 저장
-            Log.d("ROUTE_DISPLAY", "Initial candidate routes count: ${candidateRoutes.size}")
-            routes = candidateRoutes
-
-            val parsedSites = getSeoulData()?.let { parseIncompleteSites(it) } ?: emptyList()
-            incompleteSites = parsedSites
-
-            // 하수관로 데이터 호출 및 파싱 (임시 비활성화)
-            /*
-            val allPstnInfos = getDrainpipeData()
-            val geocodedDrainpipeSites = mutableListOf<LatLng>()
-            allPstnInfos.forEach { address ->
-                val latLng = geocodeAddress(address)
-                if (latLng != null) {
-                    geocodedDrainpipeSites.add(latLng)
-                }
-            }
-            drainpipeSites = geocodedDrainpipeSites
-            Log.d("DRAINPIPE_MARKER", "Number of drainpipe sites geocoded: ${drainpipeSites.size}")
-            drainpipeSites.forEachIndexed { index, latLng ->
-                Log.d("DRAINPIPE_MARKER", "Drainpipe site $index: Lat=${latLng.latitude}, Lng=${latLng.longitude}")
-            }
-            */
-
-            var sitesOnRoutes: Map<Int, List<LatLng>> = emptyMap() // 스코프 확장
-
             while (currentAttempt < maxAttempts && !finalSafeRouteFound && candidateRoutes.isNotEmpty()) {
                 currentAttempt++
-                Log.d("ROUTE_SEARCH", "--- 탐색 시도: $currentAttempt ---")
+                Log.d("ROUTE_SEARCH", "--- Search Attempt: $currentAttempt ---")
 
-                sitesOnRoutes = findConstructionSitesOnRoutes(candidateRoutes, parsedSites) // 업데이트
+                val constructionSitesOnRoutes = if (includeConstruction) {
+                    findHazardSitesOnRoutes(candidateRoutes, incompleteSites, threshold = 150.0)
+                } else {
+                    emptyMap()
+                }
+                val drainpipeSitesOnRoutes = findHazardSitesOnRoutes(
+                    candidateRoutes,
+                    hazardousDrainpipeSites,
+                    threshold = 10.0
+                )
+                val noiseLevelSitesOnRoutes = findHazardSitesOnRoutes(
+                    candidateRoutes,
+                    hazardousNoiseLevelSites,
+                    threshold = 10.0
+                ) // 소음도 데이터 추가
+                Log.d("ROUTE_SEARCH", "Noise level sites on routes: $noiseLevelSitesOnRoutes")
 
-                // 4. 최선 후보 선택 (공사장 수, 경로 길이 기준)
-                val bestRoute = candidateRoutes.minByOrNull { route ->
+                allSitesOnRoutes =
+                    (constructionSitesOnRoutes.keys + drainpipeSitesOnRoutes.keys + noiseLevelSitesOnRoutes.keys).associateWith { routeIndex ->
+                        (constructionSitesOnRoutes[routeIndex] ?: emptyList()) +
+                                (drainpipeSitesOnRoutes[routeIndex] ?: emptyList()) +
+                                (noiseLevelSitesOnRoutes[routeIndex] ?: emptyList())
+                    }
+
+                Log.d(
+                    "ROUTE_SEARCH",
+                    "Found ${allSitesOnRoutes.values.sumOf { it.size }} total hazards on routes."
+                )
+
+                val bestRoute = candidateRoutes.minByOrNull { route: List<LatLng> ->
                     val routeIndex = candidateRoutes.indexOf(route)
-                    val constructionCount = sitesOnRoutes[routeIndex]?.size ?: 0
-                    val routeLength = route.zipWithNext { a, b -> haversine(a.latitude, a.longitude, b.latitude, b.longitude) }.sum()
-                    constructionCount * 100000 + routeLength // 공사장 1개를 100km 페널티로 계산
+                    val hazardCount = allSitesOnRoutes[routeIndex]?.size ?: 0
+                    val routeLength = route.zipWithNext { a: LatLng, b: LatLng ->
+                        haversine(
+                            a.latitude,
+                            a.longitude,
+                            b.latitude,
+                            b.longitude
+                        )
+                    }.sum()
+                    hazardCount * 100000.0 + routeLength
                 }!!
 
                 val bestRouteIndex = candidateRoutes.indexOf(bestRoute)
-                val sitesOnBestRoute = sitesOnRoutes[bestRouteIndex] ?: emptyList()
+                val sitesOnBestRoute = allSitesOnRoutes[bestRouteIndex] ?: emptyList()
 
-                Log.d("ROUTE_SEARCH", "최선 후보: 경로 ${bestRouteIndex+1} (공사장 ${sitesOnBestRoute.size}개)")
+                Log.d(
+                    "ROUTE_SEARCH",
+                    "Best candidate: Route ${bestRouteIndex + 1} (Hazards: ${sitesOnBestRoute.size})"
+                )
 
-                // 5. 최선 후보가 안전한지 검사
                 if (sitesOnBestRoute.isEmpty()) {
-                    Log.d("ROUTE_SEARCH", "🎉 안전 경로 발견! 탐색을 종료합니다.")
-                    Log.d("ROUTE_DISPLAY", "Final safe route found. Routes count: 1")
-                    selectedRoute = bestRoute // 안전 경로만 최종 표시
+                    Log.d("ROUTE_SEARCH", "🎉 Safe route found!")
+                    selectedRoute = bestRoute
                     finalSafeRouteFound = true
                 } else {
-                    // 6. 안전하지 않다면, 새로운 우회 경로 생성
-                    Log.d("ROUTE_SEARCH", "안전하지 않음. 첫번째 공사장을 기준으로 우회 경로 4개를 생성합니다.")
                     val firstSite = sitesOnBestRoute.first()
-                    val detourDistance = 0.0009 * (currentAttempt) // 시도할수록 더 멀리 우회
-                    val waypoints = listOf(
-                        LatLng(firstSite.latitude, firstSite.longitude + detourDistance),
-                        LatLng(firstSite.latitude, firstSite.longitude - detourDistance),
-                        LatLng(firstSite.latitude + detourDistance, firstSite.longitude),
-                        LatLng(firstSite.latitude - detourDistance, firstSite.longitude)
+                    Log.d(
+                        "ROUTE_SEARCH",
+                        "Unsafe route. First hazard at: ${firstSite.latitude}, ${firstSite.longitude}"
                     )
 
-                    val newDetourRoutes = waypoints.mapNotNull {
-                        getDirectionsWithWaypoints(start, goal, it)
+                    val detourDistance = if (hazardousDrainpipeSites.contains(firstSite)) {
+                        Log.d("ROUTE_SEARCH", "Hazard is a drainpipe. Detouring by 20m.")
+                        0.00018 // Approx 20 meters
+                    } else if (hazardousNoiseLevelSites.contains(firstSite)) { // 소음도 위험 지역 처리
+                        Log.d("ROUTE_SEARCH", "Hazard is a noise level site. Detouring by 150m.")
+                        0.00135 // Approx 150 meters
+                    } else {
+                        Log.d(
+                            "ROUTE_SEARCH",
+                            "Hazard is a construction site. Detouring by ${100 * currentAttempt}m."
+                        )
+                        0.0027 // Approx 300 meters
                     }
 
-                    // 7. 다음 탐색을 위해 후보 경로 교체
-                    Log.d("ROUTE_DISPLAY", "New detour routes count: ${newDetourRoutes.size}")
+                    val waypoints = mutableListOf<LatLng>()
+
+                    // Always generate a waypoint in a random cardinal direction around the hazard site
+                    val randomDirectionWaypoints = listOf(
+                        LatLng(firstSite.latitude, firstSite.longitude + detourDistance), // East
+                        LatLng(firstSite.latitude, firstSite.longitude - detourDistance), // West
+                        LatLng(firstSite.latitude + detourDistance, firstSite.longitude), // North
+                        LatLng(firstSite.latitude - detourDistance, firstSite.longitude)  // South
+                    )
+                    val detourWaypoint =
+                        randomDirectionWaypoints[Random.nextInt(randomDirectionWaypoints.size)]
+                    waypoints.add(detourWaypoint)
+                    Log.d(
+                        "ROUTE_SEARCH",
+                        "Generated 1 detour waypoint in a random cardinal direction around the hazard."
+                    )
+
+                    val newDetourRoutes =
+                        listOfNotNull(getDirectionsWithWaypoints(start, goal, waypoints))
                     candidateRoutes = newDetourRoutes
                     routes = (routes + newDetourRoutes).distinct()
                 }
             }
 
             if (!finalSafeRouteFound) {
-                Log.d("ROUTE_SEARCH", "최대 시도($maxAttempts) 후에도 안전 경로를 찾지 못했습니다. GPT에게 문의합니다.")
-
-                // GPT에게 보낼 후보 경로 정보 구성
-                val candidateRoutesInfoForGpt = candidateRoutes.mapIndexed { index, route ->
-                    val constructionCount = sitesOnRoutes[index]?.size ?: 0
-                    val routeLength = route.zipWithNext { a, b -> haversine(a.latitude, a.longitude, b.latitude, b.longitude) }.sum()
+                Log.d("ROUTE_SEARCH", "No safe route found. Consulting GPT.")
+                selectedTabIndex = 1 // Switch to Route Data tab
+                val top3CandidateRoutesInfoForGpt = candidateRoutes.mapIndexed { index, route ->
+                    val routeLength = route.zipWithNext { a: LatLng, b: LatLng ->
+                        haversine(
+                            a.latitude,
+                            a.longitude,
+                            b.latitude,
+                            b.longitude
+                        )
+                    }.sum()
                     RouteInfoForGpt(
-                        id = "route_${index + 1}", // 고유 ID 부여
+                        id = "route_${index + 1}",
                         lengthKm = routeLength / 1000.0,
-                        constructionSites = sitesOnRoutes[index] ?: emptyList()
+                        hazardSites = allSitesOnRoutes.getOrElse(index) { emptyList() },
+                        routeCoordinates = route
                     )
                 }
+                    .sortedWith(compareBy({ it.hazardSites.size }, { it.lengthKm }))
+                    .take(3)
 
-                // GPT 호출
-                val gptDecision = sendGptRequest(start, goal, candidateRoutesInfoForGpt)
-
+                val gptDecision = sendGptRequest(start, goal, top3CandidateRoutesInfoForGpt)
                 when (gptDecision?.decision) {
                     "choose_route" -> {
-                        val chosenRouteId = gptDecision.chosenRouteId
-                        val chosenRoute = candidateRoutesInfoForGpt.find { it.id == chosenRouteId }?.let { chosenInfo ->
-                            candidateRoutes[candidateRoutesInfoForGpt.indexOf(chosenInfo)]
-                        }
-                        if (chosenRoute != null) {
-                            selectedRoute = chosenRoute // GPT가 선택한 경로를 최종 경로로 설정
-                            Log.d("ROUTE_DISPLAY", "GPT chosen route. Routes count: 1")
+                        val chosenRouteIndex = gptDecision.chosenRouteIndex
+                        if (chosenRouteIndex != null && chosenRouteIndex >= 0 && chosenRouteIndex < top3CandidateRoutesInfoForGpt.size) {
+                            val chosenInfo = top3CandidateRoutesInfoForGpt[chosenRouteIndex]
+                            selectedRoute = chosenInfo.routeCoordinates
                         } else {
-                            Log.d("ROUTE_SEARCH", "GPT가 선택한 경로를 찾을 수 없습니다. 기존 최선 경로를 표시합니다.")
-                            val bestRoute = candidateRoutes.minByOrNull { route ->
-                                val routeIndex = candidateRoutes.indexOf(route)
-                                val constructionCount = sitesOnRoutes[routeIndex]?.size ?: 0
-                                val routeLength = route.zipWithNext { a, b -> haversine(a.latitude, a.longitude, b.latitude, b.longitude) }.sum()
-                                constructionCount * 100000 + routeLength
-                            }
-                            selectedRoute = bestRoute
+                            selectedRoute = candidateRoutes.firstOrNull()
                         }
                     }
+
                     "suggest_waypoints" -> {
                         val gptWaypoints = gptDecision.waypoints
                         if (gptWaypoints != null && gptWaypoints.isNotEmpty()) {
-                            Log.d("ROUTE_SEARCH", "GPT로부터 ${gptWaypoints.size}개의 경유지 추천 받음.")
-                            val gptRecommendedRoute = getDirectionsWithWaypoints(start, goal, gptWaypoints.first()) // GPT가 여러개 줘도 일단 첫번째만 사용
-                            if (gptRecommendedRoute != null) {
-                                selectedRoute = gptRecommendedRoute // GPT 추천 경로를 최종 경로로 설정
-                                Log.d("ROUTE_DISPLAY", "GPT recommended route. Routes count: 1")
-                            } else {
-                                Log.d("ROUTE_SEARCH", "GPT 추천 경유지로 경로를 찾을 수 없습니다. 기존 최선 경로를 표시합니다.")
-                                val bestRoute = candidateRoutes.minByOrNull { route ->
-                                    val routeIndex = candidateRoutes.indexOf(route)
-                                    val constructionCount = sitesOnRoutes[routeIndex]?.size ?: 0
-                                    val routeLength = route.zipWithNext { a, b -> haversine(a.latitude, a.longitude, b.latitude, b.longitude) }.sum()
-                                    constructionCount * 100000 + routeLength
-                                }
-                                selectedRoute = bestRoute
-                            }
+                            val gptRecommendedRoute =
+                                getDirectionsWithWaypoints(start, goal, gptWaypoints)
+                            selectedRoute = gptRecommendedRoute ?: candidateRoutes.firstOrNull()
+                        } else {
+                            selectedRoute = candidateRoutes.firstOrNull()
                         }
                     }
+
                     else -> {
-                        Log.d("ROUTE_SEARCH", "GPT 응답이 유효하지 않거나 결정이 없습니다. 기존 최선 경로를 표시합니다.")
-                        val bestRoute = candidateRoutes.minByOrNull { route ->
-                            val routeIndex = candidateRoutes.indexOf(route)
-                            val constructionCount = sitesOnRoutes[routeIndex]?.size ?: 0
-                            val routeLength = route.zipWithNext { a, b -> haversine(a.latitude, a.longitude, b.latitude, b.longitude) }.sum()
-                            constructionCount * 100000 + routeLength
-                        }
-                        if(bestRoute != null) selectedRoute = bestRoute
+                        selectedRoute = candidateRoutes.firstOrNull()
                     }
                 }
             }
-            // --- 알고리즘 종료 ---
+
+            // --- UI Update ---
+            isLoading = false // Hide loading indicator
+            val allMarkers = mutableListOf<LatLng>()
+            if (includeConstruction) allMarkers.addAll(incompleteSites)
+            if (includeDrainpipe) allMarkers.addAll(allDrainpipes.mapNotNull { it.location })
+            if (includeNoiseLevel) allMarkers.addAll(allNoiseLevels.mapNotNull { it.location }) // 소음도 마커 추가
+
+            if (allMarkers.isNotEmpty()) {
+                val bounds =
+                    LatLngBounds.Builder().apply { allMarkers.forEach { include(it) } }.build()
+                cameraPositionState.move(CameraUpdate.fitBounds(bounds, 100))
+            }
+
+            // Adjust camera to fit the selected route
+            selectedRoute?.let { route ->
+                if (route.isNotEmpty()) {
+                    val routeBounds =
+                        LatLngBounds.Builder().apply { route.forEach { include(it) } }.build()
+                    cameraPositionState.move(CameraUpdate.fitBounds(routeBounds, 100))
+                }
+            }
         }
-
-        // 모든 마커를 포함하도록 카메라 이동
-        val allMarkers = incompleteSites
-        if (allMarkers.isNotEmpty()) {
-            val bounds = LatLngBounds.Builder().apply {
-                allMarkers.forEach { include(it) }
-            }.build()
-            cameraPositionState.move(
-                CameraUpdate.fitBounds(bounds, 100) // 100dp 패딩
-            )
-        }
-        
-    }
-
-    var routeVisibility by remember { mutableStateOf<List<Boolean>>(emptyList()) }
-
-    // routes 상태가 변경될 때 routeVisibility를 초기화합니다.
-    LaunchedEffect(routes) {
-        routeVisibility = List(routes.size) { true }
     }
 
     Column(modifier = modifier.fillMaxSize()) {
-        // 경로 토글 버튼 (2줄 그리드)
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(2),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(120.dp) // 그리드의 높이를 조절하여 2줄로 보이게 함
-                .padding(8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            itemsIndexed(routes) { index, route ->
-                val isVisible = routeVisibility.getOrElse(index) { true }
-                val isSelected = route == selectedRoute
-                val isInitial = route == initialNaverRoute
-
-                val buttonText = when {
-                    isSelected -> "Final"
-                    isInitial -> "Initial"
-                    else -> "Route ${index + 1}"
-                }
-
-                val borderColor = when {
-                    isSelected -> Color.Green
-                    isInitial -> Color.Red
-                    else -> Color.Transparent
-                }
-
-                Button(
-                    onClick = {
-                        routeVisibility = routeVisibility.toMutableList().also {
-                            if (index < it.size) {
-                                it[index] = !it[index]
-                            }
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (isVisible) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
-                        contentColor = if (isVisible) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
-                    ),
-                    modifier = Modifier.border(2.dp, borderColor)
-                ) {
-                    Text(buttonText)
-                }
-            }
+        TabRow(selectedTabIndex = selectedTabIndex) {
+            Tab(
+                selected = selectedTabIndex == 0,
+                onClick = { selectedTabIndex = 0 },
+                text = { Text("지도") })
+            Tab(
+                selected = selectedTabIndex == 1,
+                onClick = { selectedTabIndex = 1 },
+                text = { Text("경로 데이터") })
         }
 
-        
-            NaverMap(
-                modifier = Modifier.weight(1f),
-                cameraPositionState = cameraPositionState,
-            ) {
-                val routeColors = listOf(
-                    androidx.compose.ui.graphics.Color.Blue,
-                    androidx.compose.ui.graphics.Color.Yellow,
-                    androidx.compose.ui.graphics.Color.Cyan,
-                    androidx.compose.ui.graphics.Color.Magenta,
-                    androidx.compose.ui.graphics.Color.Black,
-                    androidx.compose.ui.graphics.Color.DarkGray,
-                    androidx.compose.ui.graphics.Color.LightGray
-                )
+        when (selectedTabIndex) {
+            0 -> { // Map Tab
+                if (isLoading) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
+                        Text("경로를 탐색중입니다...", modifier = Modifier.padding(top = 60.dp))
+                    }
+                } else {
+                    var routeVisibility by remember { mutableStateOf<List<Boolean>>(emptyList()) }
 
-                routes.forEachIndexed { index, route ->
-                    if (routeVisibility.getOrElse(index) { true }) {
-                        val isSelected = route == selectedRoute
-                        val isInitialNaverRoute = route == initialNaverRoute
+                    LaunchedEffect(routes) {
+                        routeVisibility = List(routes.size) { true }
+                    }
 
-                        val color = when {
-                            isSelected -> androidx.compose.ui.graphics.Color.Green
-                            isInitialNaverRoute -> androidx.compose.ui.graphics.Color.Red
-                            else -> routeColors[index % routeColors.size]
-                        }
-                        val pathWidth = when {
-                            isSelected -> 8.dp
-                            isInitialNaverRoute -> 6.dp // 초기 네이버 경로도 두껍게
-                            else -> 3.dp
-                        }
-                        val outline = when {
-                            isSelected -> 1.dp
-                            isInitialNaverRoute -> 1.dp // 초기 네이버 경로도 아웃라인
-                            else -> 0.dp
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(2),
+                            modifier = Modifier.fillMaxWidth().height(120.dp).padding(8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            itemsIndexed(routes) { index, route ->
+                                val isVisible = routeVisibility.getOrElse(index) { true }
+                                val isSelected = route == selectedRoute
+                                val isInitial = route == initialNaverRoute
+
+                                val buttonText = when {
+                                    isSelected -> "Final"
+                                    isInitial -> "Initial"
+                                    else -> "Route ${index + 1}"
+                                }
+                                val borderColor = when {
+                                    isSelected -> Color.Green
+                                    isInitial -> Color.Red
+                                    else -> Color.Transparent
+                                }
+
+                                Button(
+                                    onClick = {
+                                        routeVisibility = routeVisibility.toMutableList().also {
+                                            if (index < it.size) it[index] = !it[index]
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (isVisible) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
+                                        contentColor = if (isVisible) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+                                    ),
+                                    modifier = Modifier.border(2.dp, borderColor)
+                                ) {
+                                    Text(buttonText)
+                                }
+                            }
                         }
 
-                        PathOverlay(
-                            coords = route,
-                            width = pathWidth,
-                            color = color,
-                            outlineWidth = outline
-                        )
+                        NaverMap(
+                            modifier = Modifier.weight(1f),
+                            cameraPositionState = cameraPositionState,
+                        ) {
+                            val routeColors = listOf(
+                                Color.Blue,
+                                Color.Yellow,
+                                Color.Cyan,
+                                Color.Magenta,
+                                Color.Black,
+                                Color.DarkGray,
+                                Color.LightGray
+                            )
+
+                            routes.forEachIndexed { index, route ->
+                                if (routeVisibility.getOrElse(index) { true }) {
+                                    val isSelected = route == selectedRoute
+                                    val isInitialNaverRoute = route == initialNaverRoute
+                                    val color = when {
+                                        isSelected -> Color.Green
+                                        isInitialNaverRoute -> Color.Red
+                                        else -> routeColors[index % routeColors.size]
+                                    }
+                                    val pathWidth =
+                                        if (isSelected) 8.dp else if (isInitialNaverRoute) 6.dp else 3.dp
+                                    val outline =
+                                        if (isSelected || isInitialNaverRoute) 1.dp else 0.dp
+
+                                    PathOverlay(
+                                        coords = route,
+                                        width = pathWidth,
+                                        color = color,
+                                        outlineWidth = outline
+                                    )
+                                }
+                            }
+
+                            incompleteSites.forEach { site ->
+                                if (includeConstruction) {
+                                    Marker(
+                                        state = MarkerState(position = site),
+                                        captionText = "공사중",
+                                        iconTintColor = Color.Magenta
+                                    )
+                                    CircleOverlay(
+                                        center = site,
+                                        radius = 150.0, // 150 meters for construction sites
+                                        color = Color.Magenta.copy(alpha = 0.2f), // Semi-transparent fill
+                                        outlineColor = Color.Magenta,
+                                        outlineWidth = 1.dp
+                                    )
+                                }
+                            }
+
+                            // Display all drainpipes with color coding and radius
+                            allDrainpipes.forEach { drainpipe ->
+                                drainpipe.location?.let {
+                                    if (includeDrainpipe) {
+                                        Log.d(
+                                            "DIRECTIONS_DEBUG",
+                                            "Drainpipe location: ${it.latitude}, ${it.longitude}"
+                                        )
+                                        val isHazardous = drainpipe.waterLevel >= 20.0
+                                        val color = if (isHazardous) Color.Red else Color.Blue
+                                        val caption = if (isHazardous) "위험 하수관로" else "하수관로"
+
+                                        Marker(
+                                            state = MarkerState(position = it),
+                                            captionText = caption,
+                                            iconTintColor = color,
+                                            captionColor = color
+                                        )
+
+                                        CircleOverlay(
+                                            center = it,
+                                            radius = if (isHazardous) 10.0 else 5.0, // 10 meters for hazardous, 5 meters for normal
+                                            color = color.copy(alpha = 0.2f), // Semi-transparent fill based on marker color
+                                            outlineColor = color,
+                                            outlineWidth = 1.dp
+                                        )
+                                    }
+                                }
+                            }
+
+                            allNoiseLevels.forEach { noiseLevelInfo ->
+                                noiseLevelInfo.location?.let {
+                                    if (includeNoiseLevel) {
+                                        val isHazardous =
+                                            noiseLevelInfo.noiseLevel >= 70.0 // 70.0 이상을 위험으로 간주
+                                        val color = if (isHazardous) Color.Red else Color.Cyan
+                                        val caption = if (isHazardous) "위험 소음" else "소음"
+
+                                        Marker(
+                                            state = MarkerState(position = it),
+                                            captionText = caption,
+                                            iconTintColor = color,
+                                            captionColor = color
+                                        )
+
+                                        CircleOverlay(
+                                            center = it,
+                                            radius = if (isHazardous) 150.0 else 5.0, // 위험 소음은 150m, 일반 소음은 5m
+                                            color = color.copy(alpha = 0.2f), // Semi-transparent fill based on marker color
+                                            outlineColor = color,
+                                            outlineWidth = 1.dp
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
-
-                incompleteSites.forEach { site ->
-                    Marker(
-                        state = MarkerState(position = site),
-                        captionText = "공사중",
-                        captionColor = androidx.compose.ui.graphics.Color.Magenta, // 겹치는 공사 현장은 자홍색
-                        iconTintColor = androidx.compose.ui.graphics.Color.Red // 아이콘 색상도 변경
-                    )
-                }
-
-                // 하수관로 마커 표시 (임시 비활성화)
-                /*
-                drainpipeSites.forEach { site ->
-                    Marker(
-                        state = MarkerState(position = site),
-                        captionText = "하수관로",
-                        captionColor = androidx.compose.ui.graphics.Color.Blue,
-                        iconTintColor = androidx.compose.ui.graphics.Color.Blue
-                    )
-                }
-                */
             }
+
+            1 -> { // Route Data Tab
+                val routeDisplayInfos = routes.mapIndexed { index, route ->
+                    val hazardCount = allSitesOnRoutes[index]?.size ?: 0
+                    val routeLength = route.zipWithNext { a: LatLng, b: LatLng ->
+                    haversine(
+                            a.latitude,
+                            a.longitude,
+                            b.latitude,
+                            b.longitude
+                        )
+                    }.sum()
+
+                    val currentRouteHazards = allSitesOnRoutes[index] ?: emptyList()
+                    val otherRoutesHazards =
+                        allSitesOnRoutes.filterKeys { it != index }.values.flatten()
+                    val overlappingHazardSitesCount =
+                        currentRouteHazards.intersect(otherRoutesHazards.toSet()).size
+
+                    val firstHazardSite = currentRouteHazards.firstOrNull()
+                    val distanceToFirstHazard = if (firstHazardSite != null && route.isNotEmpty()) {
+                        // Find the segment that contains or is closest to the first hazard
+                        var dist = 0.0
+                        for (i in 0 until route.size - 1) {
+                            val segmentStart = route[i]
+                            val segmentEnd = route[i + 1]
+                            val distToSegmentEnd = haversine(
+                                segmentStart.latitude,
+                                segmentStart.longitude,
+                                segmentEnd.latitude,
+                                segmentEnd.longitude
+                            )
+                            dist += distToSegmentEnd
+                            // Simple check: if the hazard is close to the segment end, consider this the point
+                            if (haversine(
+                                    firstHazardSite.latitude,
+                                    firstHazardSite.longitude,
+                                    segmentEnd.latitude,
+                                    segmentEnd.longitude
+                                ) < 50
+                            ) { // 50m threshold
+                                break
+                            }
+                        }
+                        dist
+                    } else {
+                        null
+                    }
+
+                    RouteDisplayInfo(
+                        id = "route_${index + 1}",
+                        lengthKm = routeLength / 1000.0,
+                        hazardSitesCount = hazardCount,
+                        overlappingHazardSitesCount = overlappingHazardSitesCount,
+                        distanceToFirstHazard = distanceToFirstHazard,
+                        routeCoordinates = route
+                    )
+                }
+                RouteDataDisplayView(routeDisplayInfos)
+            }
+        }
     }
 }
 
-// ... (이하 모든 헬퍼 함수들은 이전과 동일하게 유지) ...
 
 // ✅ 네이버 경로 API 호출
-private fun getDirections(start: LatLng, goal: LatLng): List<List<LatLng>>? {
+fun getDirections(start: LatLng, goal: LatLng): List<List<LatLng>>? {
     val url = "https://maps.apigw.ntruss.com/map-direction/v1/driving" +
             "?start=${start.longitude},${start.latitude}" +
             "&goal=${goal.longitude},${goal.latitude}" +
@@ -405,8 +577,8 @@ private fun getDirections(start: LatLng, goal: LatLng): List<List<LatLng>>? {
                     val routeArray = routeObject.getJSONArray(key)
                     if (routeArray.length() > 0) {
                         val pathArray = routeArray.getJSONObject(0).getJSONArray("path")
-                        val path = (0 until pathArray.length()).map {
-                            val point = pathArray.getJSONArray(it)
+                        val path = (0 until pathArray.length()).map { i ->
+                            val point = pathArray.getJSONArray(i)
                             LatLng(point.getDouble(1), point.getDouble(0))
                         }
                         allRoutes.add(path)
@@ -422,11 +594,12 @@ private fun getDirections(start: LatLng, goal: LatLng): List<List<LatLng>>? {
 }
 
 // ✅ 경유지를 포함한 네이버 경로 API 호출
-private fun getDirectionsWithWaypoints(start: LatLng, goal: LatLng, waypoint: LatLng): List<LatLng>? {
+fun getDirectionsWithWaypoints(start: LatLng, goal: LatLng, waypoints: List<LatLng>): List<LatLng>? {
+    val waypointsString = waypoints.take(5).joinToString("_") { "${it.longitude},${it.latitude}" }
     val url = "https://maps.apigw.ntruss.com/map-direction/v1/driving" +
             "?start=${start.longitude},${start.latitude}" +
             "&goal=${goal.longitude},${goal.latitude}" +
-            "&waypoints=${waypoint.longitude},${waypoint.latitude}"
+            if (waypointsString.isNotEmpty()) "&waypoints=$waypointsString" else ""
 
     Log.d("API_CALL", "Calling getDirectionsWithWaypoints API. URL: $url")
     Log.d("API_CALL", "NAVER_CLIENT_ID: ${BuildConfig.NAVER_CLIENT_ID}")
@@ -456,8 +629,8 @@ private fun getDirectionsWithWaypoints(start: LatLng, goal: LatLng, waypoint: La
                     val routeArray = routeObject.getJSONArray("traoptimal")
                     if (routeArray.length() > 0) {
                         val pathArray = routeArray.getJSONObject(0).getJSONArray("path")
-                        return (0 until pathArray.length()).map {
-                            val point = pathArray.getJSONArray(it)
+                        return (0 until pathArray.length()).map { i ->
+                            val point = pathArray.getJSONArray(i)
                             LatLng(point.getDouble(1), point.getDouble(0))
                         }
                     }
@@ -466,254 +639,7 @@ private fun getDirectionsWithWaypoints(start: LatLng, goal: LatLng, waypoint: La
             null
         }
     } catch (e: Exception) {
-        Log.e("DIRECTIONS_ERROR", "[Waypoint] 예외 발생: ${e.message}", e)
+        Log.e("DIRECTIONS_ERROR", "예외 발생: ${e.message}", e)
         null
     }
-}
-
-// ✅ 서울시 공공데이터 호출
-private fun getSeoulData(): String? {
-    val url = "http://openapi.seoul.go.kr:8088/${BuildConfig.API_CLIENT_KEY}/xml/ListOnePMISBizInfo/1/1000/"
-
-    Log.d("API_CALL", "Calling getSeoulData API. URL: $url")
-
-    val request = Request.Builder().url(url).build()
-    val client = OkHttpClient()
-    return try {
-        client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                Log.e("SEOUL_API_ERROR", "HTTP 오류: ${response.code}, ${response.message}")
-                Log.e("API_CALL", "getSeoulData API Response (Error): ${response.body?.string()}")
-                return null
-            }
-            val responseBody = response.body?.string()
-            Log.d("API_CALL", "getSeoulData API Response (Success): ${responseBody?.take(500)}...") // Log first 500 chars
-            responseBody
-        }
-    } catch (e: Exception) {
-        Log.e("SEOUL_API_ERROR", "예외 발생: ${e.message}", e)
-        null
-    }
-}
-
-// ✅ 서울시 하수관로 데이터 호출
-private fun getDrainpipeData(): List<String> { // 반환 타입을 List<String>으로 변경
-    val allPstnInfos = mutableListOf<String>()
-    val calendar = Calendar.getInstance()
-    val dateFormat = SimpleDateFormat("yyyyMMddHH", Locale.getDefault())
-
-    val currentTime = calendar.time
-    val currentFormattedTime = dateFormat.format(currentTime)
-
-    calendar.add(Calendar.HOUR_OF_DAY, -1)
-    val oneHourAgoTime = calendar.time
-    val oneHourAgoFormattedTime = dateFormat.format(oneHourAgoTime)
-
-    val startTime = oneHourAgoFormattedTime
-    val endTime = currentFormattedTime
-
-    for (i in 1..25) {
-        val seCd = String.format("%02d", i)
-        val url = "http://openAPI.seoul.go.kr:8088/${BuildConfig.API_CLIENT_KEY}/xml/DrainpipeMonitoringInfo/1/1000/$seCd/$startTime/$endTime"
-
-        Log.d("API_CALL", "Calling getDrainpipeData API for seCd=$seCd. URL: $url")
-
-        val request = Request.Builder().url(url).build()
-        val client = OkHttpClient()
-        try {
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    Log.e("DRAINPIPE_API_ERROR", "HTTP 오류 (seCd=$seCd): ${response.code}, ${response.message}")
-                    Log.e("API_CALL", "getDrainpipeData API Response (Error, seCd=$seCd): ${response.body?.string()}")
-                } else {
-                    val responseBody = response.body?.string()
-                    if (responseBody != null) {
-                        Log.d("API_CALL", "getDrainpipeData API Response (Success, seCd=$seCd): ${responseBody.take(500)}...")
-                        val parsedAddresses = parseDrainpipeSites(responseBody)
-                        Log.d("DRAINPIPE_DEBUG", "seCd=$seCd parsed ${parsedAddresses.size} addresses.") // 추가된 로그
-                        allPstnInfos.addAll(parsedAddresses)
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Log.e("DRAINPIPE_API_ERROR", "예외 발생 (seCd=$seCd): ${e.message}", e)
-        }
-        Log.d("DRAINPIPE_DEBUG", "Total addresses collected so far: ${allPstnInfos.size}") // 추가된 로그
-    }
-    return allPstnInfos
-}
-
-// ✅ XML에서 공사 미완료(LAT, LOT)만 파싱
-fun parseIncompleteSites(xml: String): List<LatLng> {
-    val list = mutableListOf<LatLng>()
-    val factory = XmlPullParserFactory.newInstance()
-    val parser = factory.newPullParser()
-    parser.setInput(xml.reader())
-
-    var eventType = parser.eventType
-    var lat: Double? = null
-    var lot: Double? = null
-    var isIncomplete = false
-    var tagName: String? = null
-
-    while (eventType != XmlPullParser.END_DOCUMENT) {
-        when (eventType) {
-            XmlPullParser.START_TAG -> tagName = parser.name
-            XmlPullParser.TEXT -> {
-                when (tagName) {
-                    "CMCN_YN1" -> isIncomplete = parser.text.trim() == "0"
-                    "LAT" -> lat = parser.text.toDoubleOrNull()
-                    "LOT" -> lot = parser.text.toDoubleOrNull()
-                }
-            }
-            XmlPullParser.END_TAG -> {
-                if (parser.name == "row") {
-                    if (isIncomplete && lat != null && lot != null) {
-                        list += LatLng(lat, lot)
-                    }
-                    isIncomplete = false
-                    lat = null
-                    lot = null
-                }
-                tagName = null
-            }
-        }
-        eventType = parser.next()
-    }
-    return list
-}
-
-// ✅ XML에서 하수관로 데이터 파싱 (LOC_X, LOC_Y 사용)
-fun parseDrainpipeSites(xml: String): List<String> { // 반환 타입을 List<String>으로 변경
-    val list = mutableListOf<String>()
-    val factory = XmlPullParserFactory.newInstance()
-    val parser = factory.newPullParser()
-    parser.setInput(xml.reader())
-
-    var eventType = parser.eventType
-    var pstnInfo: String? = null // PSTN_INFO를 저장할 변수
-    var tagName: String? = null
-
-    while (eventType != XmlPullParser.END_DOCUMENT) {
-        when (eventType) {
-            XmlPullParser.START_TAG -> tagName = parser.name
-            XmlPullParser.TEXT -> {
-                when (tagName) {
-                    "PSTN_INFO" -> pstnInfo = parser.text.trim() // PSTN_INFO 태그의 텍스트를 저장
-                }
-            }
-            XmlPullParser.END_TAG -> {
-                if (parser.name == "row") { // Assuming each record is within a <row> tag
-                    if (pstnInfo != null && pstnInfo.isNotEmpty()) {
-                        list += pstnInfo
-                    }
-                    pstnInfo = null // 초기화
-                }
-                tagName = null
-            }
-        }
-        eventType = parser.next()
-    }
-    return list
-}
-
-// 두 지점 간의 거리를 미터로 계산 (Haversine 공식)
-private fun haversine(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
-    val r = 6371e3 // 지구 반지름 (미터)
-    val phi1 = Math.toRadians(lat1)
-    val phi2 = Math.toRadians(lat2)
-    val deltaPhi = Math.toRadians(lat2 - lat1)
-    val deltaLambda = Math.toRadians(lon2 - lon1)
-
-    val a = sin(deltaPhi / 2).pow(2) +
-            cos(phi1) * cos(phi2) *
-            sin(deltaLambda / 2).pow(2)
-    val c = 2 * asin(sqrt(a))
-
-    return r * c
-}
-private fun geocodeAddress(address: String): LatLng? {
-    val encodedAddress = URLEncoder.encode(address, "UTF-8")
-    val url = "https://maps.apigw.ntruss.com/map-geocode/v2/geocode?query=$encodedAddress"
-
-    Log.d("API_CALL", "Calling geocodeAddress API. URL: $url")
-
-    val request = Request.Builder()
-        .url(url)
-        .addHeader("x-ncp-apigw-api-key-id", BuildConfig.NAVER_CLIENT_ID)
-        .addHeader("x-ncp-apigw-api-key", BuildConfig.NAVER_CLIENT_SECRET)
-        .addHeader("Accept", "application/json")
-        .build()
-
-    val client = OkHttpClient()
-    return try {
-        client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                Log.e("GEOCODE_ERROR", "HTTP 오류: ${response.code}, ${response.message}")
-                Log.e("API_CALL", "geocodeAddress API Response (Error): ${response.body?.string()}")
-                return null
-            }
-            val responseBody = response.body?.string() ?: return null
-            Log.d("API_CALL", "geocodeAddress API Response (Success): ${responseBody.take(500)}...") // Log first 500 chars
-            val json = JSONObject(responseBody)
-
-            val addressesArray = json.getJSONArray("addresses")
-            if (addressesArray.length() > 0) {
-                val firstAddress = addressesArray.getJSONObject(0)
-                val x = firstAddress.getDouble("x") // longitude
-                val y = firstAddress.getDouble("y") // latitude
-                LatLng(y, x) // LatLng(latitude, longitude)
-            } else {
-                null
-            }
-        }
-    } catch (e: Exception) {
-        Log.e("GEOCODE_ERROR", "예외 발생: ${e.message}", e)
-        return null
-    }
-}
-
-
-// 한 점이 경로 위에 있는지 확인 (임계값 이내)
-private fun isLocationOnPath(location: LatLng, path: List<LatLng>, threshold: Double = 150.0): Boolean {
-    for (i in 0 until path.size - 1) {
-        val start = path[i]
-        val end = path[i + 1]
-
-        if (location.latitude < start.latitude.coerceAtMost(end.latitude) - 0.001 ||
-            location.latitude > start.latitude.coerceAtLeast(end.latitude) + 0.001 ||
-            location.longitude < start.longitude.coerceAtMost(end.longitude) - 0.001 ||
-            location.longitude > start.longitude.coerceAtLeast(end.longitude) + 0.001) {
-            continue
-        }
-
-        val dist = haversine(location.latitude, location.longitude, start.latitude, start.longitude)
-        val dist2 = haversine(location.latitude, location.longitude, end.latitude, end.longitude)
-        val segmentDist = haversine(start.latitude, start.longitude, end.latitude, end.longitude)
-
-        if (dist < threshold || dist2 < threshold) return true
-
-        val s = (dist.pow(2) - dist2.pow(2) + segmentDist.pow(2)) / (2 * segmentDist)
-        if (s.isFinite() && s in 0.0..segmentDist) {
-            val hSquared = dist.pow(2) - s.pow(2)
-            if (hSquared >= 0) {
-                val h = sqrt(hSquared)
-                if (h < threshold) return true
-            }
-        }
-    }
-    return false
-}
-
-// 경로 목록과 공사 현장 목록을 비교하여, 각 경로별로 포함된 공사 현장을 반환
-private fun findConstructionSitesOnRoutes(routes: List<List<LatLng>>, sites: List<LatLng>): Map<Int, List<LatLng>> {
-    val sitesOnRoutes = mutableMapOf<Int, MutableList<LatLng>>()
-    routes.forEachIndexed { index, route ->
-        sites.forEach { site ->
-            if (isLocationOnPath(site, route)) {
-                sitesOnRoutes.getOrPut(index) { mutableListOf() }.add(site)
-            }
-        }
-    }
-    return sitesOnRoutes
 }

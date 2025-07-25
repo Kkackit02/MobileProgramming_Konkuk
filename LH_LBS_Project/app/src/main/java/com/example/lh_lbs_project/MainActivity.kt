@@ -5,12 +5,9 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.Button
-import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import com.example.lh_lbs_project.ui.theme.LH_LBS_ProjectTheme
 import com.naver.maps.geometry.LatLng
 import kotlinx.coroutines.Dispatchers
@@ -19,6 +16,19 @@ import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import org.json.JSONArray
 import org.json.JSONObject
+
+import com.example.lh_lbs_project.DrainpipeInfo
+import com.example.lh_lbs_project.GptRouteDecision
+import com.example.lh_lbs_project.RouteInfoForGpt
+import com.example.lh_lbs_project.NoiseLevelInfo
+import com.example.lh_lbs_project.SensorInfo
+
+sealed class Screen {
+    object Title : Screen()
+    object DataLoad : Screen()
+    data class MapSelection(val incompleteSites: List<LatLng>, val allDrainpipes: List<DrainpipeInfo>, val allNoiseLevels: List<NoiseLevelInfo>, val allSensorInfo: List<SensorInfo>) : Screen()
+    data class Directions(val start: LatLng, val goal: LatLng, val incompleteSites: List<LatLng>, val allDrainpipes: List<DrainpipeInfo>, val allNoiseLevels: List<NoiseLevelInfo>, val allSensorInfo: List<SensorInfo>, val includeNoiseLevel: Boolean, val includeDrainpipe: Boolean, val includeConstruction: Boolean) : Screen()
+}
 
 class MainActivity : ComponentActivity() {
 
@@ -30,49 +40,53 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             LH_LBS_ProjectTheme {
-                var result by remember { mutableStateOf("아직 요청 전입니다.") }
-                val scope = rememberCoroutineScope()
-                var showDirections by remember { mutableStateOf(false) }
+                var currentScreen by remember { mutableStateOf<Screen>(Screen.Title) }
+                var incompleteSitesData by remember { mutableStateOf<List<LatLng>>(emptyList()) }
+                var allDrainpipesData by remember { mutableStateOf<List<DrainpipeInfo>>(emptyList()) }
+                var allNoiseLevelsData by remember { mutableStateOf<List<NoiseLevelInfo>>(emptyList()) }
+                var allSensorInfoData by remember { mutableStateOf<List<SensorInfo>>(emptyList()) }
 
-                Column(modifier = Modifier.fillMaxSize()) {
-                    // GPTRequestScreen(
-                //     resultText = result,
-                //     onRequestClick = {
-                //         scope.launch(Dispatchers.IO) {
-                //             val response = sendGptRequest()
-                //             result = response
-                //         }
-                //     },
-                //     modifier = Modifier
-                //         .weight(1f)
-                //         .fillMaxWidth()
-                // )
-
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                        Button(onClick = { showDirections = false }) {
-                            Text("마커 표시")
-                        }
-                        Button(onClick = { showDirections = true }) {
-                            Text("경로 표시")
-                        }
+                when (currentScreen) {
+                    Screen.Title -> {
+                        TitleScreen(onTimeout = {
+                            currentScreen = Screen.DataLoad
+                        })
                     }
-
-                    if (showDirections) {
-                        DirectionsScreen(
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxWidth(),
-                            sendGptRequest = { start, goal, blockedAreas ->
-                                sendGptRequest(start, goal, blockedAreas)
-                            }
+                    Screen.DataLoad -> {
+                        DataLoadScreen(onDataLoaded = { incompleteSites, allDrainpipes, allNoiseLevels, allSensorInfo ->
+                            incompleteSitesData = incompleteSites
+                            allDrainpipesData = allDrainpipes
+                            allNoiseLevelsData = allNoiseLevels
+                            allSensorInfoData = allSensorInfo
+                            currentScreen = Screen.MapSelection(incompleteSites, allDrainpipes, allNoiseLevels, allSensorInfo)
+                        })
+                    }
+                    is Screen.MapSelection -> {
+                        val screenState = currentScreen as Screen.MapSelection
+                        MapSelectionScreen(
+                            onRouteSearch = { start, goal, includeNoiseLevel, includeDrainpipe, includeConstruction ->
+                                currentScreen = Screen.Directions(start, goal, screenState.incompleteSites, screenState.allDrainpipes, screenState.allNoiseLevels, screenState.allSensorInfo, includeNoiseLevel, includeDrainpipe, includeConstruction)
+                            },
+                            allNoiseLevels = screenState.allNoiseLevels,
+                            allSensorInfo = screenState.allSensorInfo
                         )
-                    } else {
-                        MapMarkerDisplayScreen(
-                            location = LatLng(37.54160, 127.07356),
-                            locationName = "TEST",
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxWidth()
+                    }
+                    is Screen.Directions -> {
+                        val screenState = currentScreen as Screen.Directions
+                        DirectionsScreen(
+                            modifier = Modifier.fillMaxSize(),
+                            start = screenState.start,
+                            goal = screenState.goal,
+                            incompleteSites = screenState.incompleteSites,
+                            allDrainpipes = screenState.allDrainpipes,
+                            allNoiseLevels = screenState.allNoiseLevels,
+                            allSensorInfo = screenState.allSensorInfo,
+                            includeNoiseLevel = screenState.includeNoiseLevel,
+                            includeDrainpipe = screenState.includeDrainpipe,
+                            includeConstruction = screenState.includeConstruction,
+                            sendGptRequest = { start, goal, candidateRoutesInfo ->
+                                sendGptRequest(start, goal, candidateRoutesInfo)
+                            }
                         )
                     }
                 }
@@ -81,7 +95,7 @@ class MainActivity : ComponentActivity() {
     }
 
     // Firebase Function 호출을 위한 GPT 요청 함수
-    suspend fun sendGptRequest(start: LatLng, goal: LatLng, candidateRoutesInfo: List<RouteInfoForGpt>): GptRouteDecision? {
+    private suspend fun sendGptRequest(start: LatLng, goal: LatLng, candidateRoutesInfo: List<RouteInfoForGpt>): GptRouteDecision? {
         val jsonBody = JSONObject().apply {
             put("start", JSONObject().apply { put("lat", start.latitude); put("lng", start.longitude) })
             put("goal", JSONObject().apply { put("lat", goal.latitude); put("lng", goal.longitude) })
@@ -89,8 +103,11 @@ class MainActivity : ComponentActivity() {
                 JSONObject().apply {
                     put("id", routeInfo.id)
                     put("lengthKm", routeInfo.lengthKm)
-                    put("constructionSites", JSONArray(routeInfo.constructionSites.map { site ->
+                    put("hazardSites", JSONArray(routeInfo.hazardSites.map { site ->
                         JSONObject().apply { put("lat", site.latitude); put("lng", site.longitude) }
+                    }))
+                    put("routeCoordinates", JSONArray(routeInfo.routeCoordinates.map { coord ->
+                        JSONObject().apply { put("lat", coord.latitude); put("lng", coord.longitude) }
                     }))
                 }
             }))
@@ -117,12 +134,12 @@ class MainActivity : ComponentActivity() {
                     val jsonResponse = JSONObject(responseBody)
 
                     val decision = jsonResponse.getString("decision")
-                    var chosenRouteId: String? = null
+                    var chosenRouteIndex: Int? = null
                     var waypoints: List<LatLng>? = null
 
                     when (decision) {
                         "choose_route" -> {
-                            chosenRouteId = jsonResponse.getString("chosenRouteId")
+                            chosenRouteIndex = jsonResponse.getInt("chosenRouteIndex")
                         }
                         "suggest_waypoints" -> {
                             val waypointsArray = jsonResponse.getJSONArray("waypoints")
@@ -132,7 +149,7 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     }
-                    GptRouteDecision(decision, chosenRouteId, waypoints)
+                    GptRouteDecision(decision, chosenRouteIndex, waypoints)
                 }
             }
         } catch (e: Exception) {
